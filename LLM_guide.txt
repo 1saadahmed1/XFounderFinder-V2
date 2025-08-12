@@ -1,0 +1,540 @@
+# X Network Visualization Codebase Documentation
+
+This document provides a comprehensive overview of the X Network Visualization application codebase, including project structure, module capabilities, class interfaces, and function signatures.
+
+## Project Overview
+
+The X Network Visualization application is a tool for exploring, analyzing, and visualizing X (formerly Twitter) following networks. It allows users to:
+
+1. Retrieve following networks of X accounts
+2. Visualize these networks in an interactive 3D graph
+3. Analyze account importance using CloutRank (PageRank) or In-Degree metrics
+4. Detect and classify communities using AI
+5. Summarize tweet content
+6. Filter and explore the network through various metrics
+7. Export data for further analysis
+
+## Project Structure
+
+```
+network_viz_app/
+├── app.py                  # Main Streamlit application
+├── config.py               # Configuration and constants
+├── api/
+│   ├── __init__.py
+│   ├── twitter_client.py   # API interactions with X/Twitter
+│   └── ai_client.py        # Gemini API interactions
+├── data/
+│   ├── __init__.py
+│   ├── network.py          # Network data structures
+│   ├── analysis.py         # Network analysis algorithms
+│   ├── processing.py       # Data processing utilities
+│   └── communities.py      # Community detection
+├── visualization/
+│   ├── __init__.py
+│   ├── network_3d.py       # 3D network visualization
+│   └── tables.py           # Table generation
+├── utils/
+│   ├── __init__.py
+│   └── helpers.py          # State management & helpers
+└── requirements.txt        # Dependencies
+```
+
+## Module Descriptions
+
+### 1. `app.py`
+
+The main Streamlit application that integrates all components together.
+
+**Main Functions:**
+- `main()`: Entry point for the application
+
+### 2. `config.py`
+
+Stores configuration settings and constants for the application.
+
+**Constants:**
+- `RAPIDAPI_KEY`, `RAPIDAPI_HOST`: API credentials for X/Twitter API
+- `GEMINI_API_KEY`: API key for Google's Gemini AI
+- `DEFAULT_CLOUTRANK_DAMPING`, `DEFAULT_CLOUTRANK_EPSILON`, `DEFAULT_CLOUTRANK_MAX_ITER`: PageRank parameters
+- `DEFAULT_MAX_ACCOUNTS`, `DEFAULT_ACCOUNT_SIZE_FACTOR`, `DEFAULT_LABEL_SIZE_FACTOR`: UI configuration
+- `MAX_CONCURRENT_REQUESTS`, `DEFAULT_FETCH_TIMEOUT`, `DEFAULT_BATCH_SIZE`: API request configuration
+- `DEFAULT_FILTERS`: Default filtering parameters
+- `DEFAULT_NUM_COMMUNITIES`, `MIN_ACCOUNTS_FOR_COMMUNITIES`: Community detection parameters
+
+### 3. API Module
+
+#### `api/twitter_client.py`
+
+Handles interactions with the X/Twitter API via RapidAPI.
+
+**Classes:**
+```python
+class TwitterClient:
+    def __init__(self, api_key: str = RAPIDAPI_KEY, api_host: str = RAPIDAPI_HOST):
+        """Initialize the Twitter API client with API credentials."""
+        
+    async def get_following(self, screenname: str, session: aiohttp.ClientSession, 
+                           cursor: Optional[str] = None) -> Tuple[List[Dict], Optional[str]]:
+        """Get accounts that a user is following."""
+        
+    async def get_user_tweets(self, user_id: str, session: aiohttp.ClientSession, 
+                             cursor: Optional[str] = None) -> Tuple[List[Dict], Optional[str]]:
+        """Get tweets from a user."""
+        
+    def _parse_following_response(self, json_str: str) -> Tuple[List[Dict], Optional[str]]:
+        """Parse API response for following data."""
+        
+    def _parse_tweet_data(self, json_str: str) -> Tuple[List[Dict], Optional[str]]:
+        """Parse API response for tweet data."""
+        
+    @staticmethod
+    def create_session(connector_limit: int = MAX_CONCURRENT_REQUESTS, 
+                       timeout: int = DEFAULT_FETCH_TIMEOUT) -> aiohttp.ClientSession:
+        """Create a configured aiohttp ClientSession."""
+```
+
+#### `api/ai_client.py`
+
+Handles interactions with Google's Gemini AI API.
+
+**Classes:**
+```python
+class AIClient:
+    def __init__(self, api_key: str = GEMINI_API_KEY):
+        """Initialize the Gemini AI client with API key."""
+        
+    def _initialize_client(self) -> Any:
+        """Initialize Gemini client."""
+        
+    async def generate_tweet_summary(self, tweets: List[Dict], username: str) -> str:
+        """Generate a summary of a user's tweets."""
+        
+    async def generate_batch_tweet_summaries(self, batch_data: List[tuple], 
+                                           batch_size: int = DEFAULT_BATCH_SIZE) -> Dict[str, str]:
+        """Generate summaries for multiple accounts in a batch."""
+        
+    async def generate_community_labels(self, accounts: List[Dict], 
+                                      num_communities: int) -> Dict[str, str]:
+        """Generate community labels from account data."""
+        
+    async def classify_accounts(self, accounts: List[Dict], 
+                              community_labels: Dict[str, str]) -> Dict[str, str]:
+        """Classify accounts into communities."""
+```
+
+### 4. Data Module
+
+#### `data/network.py`
+
+Defines data structures for representing and manipulating network data.
+
+**Functions:**
+```python
+def compute_ratio(followers_count: int, friends_count: int) -> float:
+    """Compute follower/following ratio."""
+```
+
+**Classes:**
+```python
+class NetworkData:
+    def __init__(self):
+        """Initialize an empty network."""
+        
+    def add_original_node(self, username: str) -> str:
+        """Add the original user node."""
+        
+    def add_node(self, node_id: str, attributes: Dict) -> None:
+        """Add a node to the network."""
+        
+    def add_edge(self, source_id: str, target_id: str) -> None:
+        """Add an edge to the network."""
+        
+    def get_first_degree_nodes(self) -> Set[str]:
+        """Get nodes directly connected to the original node."""
+        
+    def get_second_degree_nodes(self) -> Set[str]:
+        """Get nodes that are second-degree connections."""
+        
+    def filter_nodes(self, filters: Dict = None) -> Dict[str, Dict]:
+        """Filter nodes based on criteria."""
+        
+    def filter_by_degree(self, filtered_nodes: Dict[str, Dict], 
+                        show_original: bool = True,
+                        show_first_degree: bool = True,
+                        show_second_degree: bool = True) -> Dict[str, Dict]:
+        """Filter nodes by degree of connection."""
+        
+    def filter_by_communities(self, nodes: Dict[str, Dict], 
+                             node_communities: Dict[str, str],
+                             selected_communities: Dict[str, bool]) -> Dict[str, Dict]:
+        """Filter nodes by community."""
+        
+    def update_node_community_colors(self, community_colors: Dict[str, str], 
+                                   node_communities: Dict[str, str]) -> None:
+        """Update node colors based on community."""
+        
+    def update_node_tweet_data(self, node_id: str, tweets: List[Dict], summary: str) -> None:
+        """Update node with tweet data."""
+        
+    def get_top_nodes_by_importance(self, importance_scores: Dict[str, float], 
+                                  max_nodes: int = 10) -> List[Tuple[str, float, Dict]]:
+        """Get top nodes by importance score."""
+        
+    def get_top_independent_nodes(self, importance_scores: Dict[str, float], 
+                                max_nodes: int = 10) -> List[Tuple[str, float, Dict]]:
+        """Get top nodes not directly connected to original."""
+```
+
+#### `data/analysis.py`
+
+Provides network analysis algorithms.
+
+**Functions:**
+```python
+def compute_in_degree(nodes: Dict[str, Dict], edges: List[Tuple[str, str]]) -> Dict[str, int]:
+    """Compute in-degree for each node."""
+    
+def compute_cloutrank(nodes: Dict[str, Dict], 
+                     edges: List[Tuple[str, str]], 
+                     damping: float = DEFAULT_CLOUTRANK_DAMPING, 
+                     epsilon: float = DEFAULT_CLOUTRANK_EPSILON, 
+                     max_iter: int = DEFAULT_CLOUTRANK_MAX_ITER, 
+                     return_contributors: bool = False) -> Dict[str, float] or Tuple[Dict[str, float], Dict[str, Dict], Dict[str, Dict]]:
+    """Compute CloutRank (PageRank) with contribution tracking."""
+    
+def select_top_nodes_for_visualization(network_data, importance_scores, max_nodes=50):
+    """Select nodes for visualization based on importance."""
+```
+
+#### `data/processing.py`
+
+Handles data collection and processing.
+
+**Classes:**
+```python
+class DataProcessor:
+    def __init__(self, twitter_client: TwitterClient, ai_client: AIClient):
+        """Initialize the data processor."""
+        
+    async def collect_network_data(self, 
+                                 username: str, 
+                                 following_pages: int = 2, 
+                                 second_degree_pages: int = 1) -> NetworkData:
+        """Collect network data for a username."""
+        
+    async def _fetch_second_degree_connections(self, 
+                                             source_id: str, 
+                                             source_name: str, 
+                                             session: aiohttp.ClientSession, 
+                                             max_pages: int) -> Tuple[str, List[Tuple[str, Dict]]]:
+        """Fetch second-degree connections."""
+        
+    async def process_tweet_data(self, 
+                               network: NetworkData, 
+                               selected_nodes: Set[str], 
+                               batch_size: int = DEFAULT_BATCH_SIZE) -> NetworkData:
+        """Process tweet data for selected nodes."""
+        
+    async def _fetch_tweets_for_node(self, 
+                                  node_id: str, 
+                                  node: Dict, 
+                                  session: aiohttp.ClientSession) -> Tuple[str, List[Dict], str]:
+        """Fetch tweets for a single node."""
+        
+    def create_downloadable_data(self, 
+                               network: NetworkData, 
+                               importance_scores: Dict[str, float],
+                               in_degrees: Dict[str, int],
+                               cloutrank_scores: Dict[str, float], 
+                               node_communities: Dict[str, str] = None,
+                               community_labels: Dict[str, str] = None) -> pd.DataFrame:
+        """Create exportable data table."""
+```
+
+#### `data/communities.py`
+
+Handles community detection and classification.
+
+**Classes:**
+```python
+class CommunityManager:
+    def __init__(self, ai_client: AIClient):
+        """Initialize the community manager."""
+        
+    def generate_n_colors(self, n: int) -> List[str]:
+        """Generate n visually distinct colors."""
+        
+    def make_color_more_distinct(self, hex_color: str) -> str:
+        """Enhance color distinctness."""
+        
+    def categorize_communities(self) -> Dict[str, str]:
+        """Group communities into broader categories."""
+        
+    def chunk_accounts_for_processing(self, accounts: List[Dict], 
+                                    max_chunk_size: int = DEFAULT_BATCH_SIZE) -> List[List[Dict]]:
+        """Split accounts into manageable chunks."""
+        
+    def merge_community_labels(self, label_groups: List[Dict[str, str]]) -> Dict[str, str]:
+        """Merge multiple sets of community labels."""
+        
+    async def generate_community_labels(self, accounts: List[Dict], 
+                                      num_communities: int = DEFAULT_NUM_COMMUNITIES) -> Dict[str, str]:
+        """Generate community labels from account data."""
+        
+    async def classify_accounts(self, accounts: List[Dict]) -> Dict[str, str]:
+        """Classify accounts into communities."""
+        
+    def get_top_accounts_by_community(self, nodes: Dict[str, Dict], 
+                                     importance_scores: Dict[str, float], 
+                                     top_n: int = 10) -> Dict[str, List]:
+        """Get top accounts for each community."""
+```
+
+### 5. Visualization Module
+
+#### `visualization/network_3d.py`
+
+Handles 3D network visualization.
+
+**Classes:**
+```python
+class Network3DVisualizer:
+    def __init__(self, size_factors: Optional[Dict] = None):
+        """Initialize the visualizer."""
+        
+    def build_visualization(self, nodes: Dict[str, Dict], 
+                           edges: List[Tuple[str, str]], 
+                           selected_nodes: List[str],
+                           importance_scores: Dict[str, float],
+                           cloutrank_scores: Dict[str, float],
+                           in_degrees: Dict[str, int],
+                           use_pagerank: bool = False) -> str:
+        """Build the 3D visualization HTML."""
+        
+    def render(self, html_code: str, height: int = 750) -> None:
+        """Render the visualization in Streamlit."""
+```
+
+#### `visualization/tables.py`
+
+Handles table visualizations.
+
+**Classes:**
+```python
+class TableVisualizer:
+    @staticmethod
+    def display_top_accounts_table(nodes: Dict[str, Dict],
+                                  importance_scores: Dict[str, float],
+                                  cloutrank_scores: Dict[str, float],
+                                  in_degrees: Dict[str, int],
+                                  top_accounts: List[Tuple[str, float, Dict]],
+                                  original_id: str,
+                                  show_tweet_summaries: bool = False,
+                                  importance_metric: str = "In-Degree") -> None:
+        """Display table of top accounts."""
+        
+    @staticmethod
+    def display_community_tables(network_nodes: Dict[str, Dict],
+                               edges: List[Tuple[str, str]],
+                               top_accounts_by_community: Dict[str, List],
+                               community_colors: Dict[str, str],
+                               community_labels: Dict[str, str],
+                               cloutrank_scores: Dict[str, float],
+                               in_degrees: Dict[str, int],
+                               show_tweet_summaries: bool = False) -> None:
+        """Display tables for each community."""
+        
+    @staticmethod
+    def display_community_color_key(community_labels: Dict[str, str],
+                                   community_colors: Dict[str, str],
+                                   node_communities: Dict[str, str]) -> None:
+        """Display color key for communities."""
+```
+
+### 6. Utils Module
+
+#### `utils/helpers.py`
+
+Contains helper utilities and state management.
+
+**Classes:**
+```python
+class StateManager:
+    # Session state keys
+    NETWORK_DATA = "network_data"
+    COMMUNITY_LABELS = "community_labels"
+    COMMUNITY_COLORS = "community_colors"
+    NODE_COMMUNITIES = "node_communities"
+    IMPORTANCE_SCORES = "importance_scores"
+    CLOUTRANK_SCORES = "full_cloutrank"
+    INDEGREE_SCORES = "in_degrees"
+    CLOUTRANK_CONTRIBUTIONS = "cloutrank_contributions"
+    USE_3D = "use_3d"
+    MAX_ACCOUNTS_DISPLAY = "max_accounts_display"
+    SHOW_TWEET_SUMMARIES = "show_tweet_summaries"
+    ALL_NODES_WITH_TWEETS = "all_nodes_with_tweets"
+    IMPORTANCE_METRIC_MODE = "importance_metric_mode"
+    
+    @staticmethod
+    def initialize() -> None:
+        """Initialize session state variables."""
+        
+    @staticmethod
+    def get_network_data() -> Tuple[Dict[str, Dict], List[Tuple[str, str]]] or None:
+        """Get stored network data."""
+        
+    @staticmethod
+    def store_network_data(nodes: Dict[str, Dict], edges: List[Tuple[str, str]]) -> None:
+        """Store network data in session state."""
+        
+    @staticmethod
+    def store_importance_scores(scores: Dict[str, float], metric_type: str) -> None:
+        """Store importance scores."""
+        
+    @staticmethod
+    def store_cloutrank_contributions(incoming: Dict[str, Dict], outgoing: Dict[str, Dict]) -> None:
+        """Store CloutRank contribution data."""
+        
+    @staticmethod
+    def store_community_data(community_labels: Dict[str, str], 
+                           community_colors: Dict[str, str], 
+                           node_communities: Dict[str, str]) -> None:
+        """Store community detection data."""
+        
+    @staticmethod
+    def get_community_data() -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]] or Tuple[None, None, None]:
+        """Get stored community data."""
+        
+    @staticmethod
+    def get_importance_metric() -> str:
+        """Get current importance metric type."""
+        
+    @staticmethod
+    def update_nodes_with_tweets(nodes_with_tweets: Dict[str, Dict]) -> None:
+        """Update stored nodes with tweet data."""
+```
+
+**Functions:**
+```python
+def format_date_for_display(date_str: str) -> str:
+    """Format a date string for display."""
+    
+def get_selected_communities(community_labels: Dict[str, str]) -> Dict[str, bool]:
+    """Get user selection state for each community."""
+```
+
+## Key Data Structures
+
+### 1. Node Structure
+
+Nodes represent X accounts with these attributes:
+
+```python
+node = {
+    "screen_name": str,            # Twitter username
+    "name": str,                   # Display name
+    "followers_count": int,        # Number of followers
+    "friends_count": int,          # Number of accounts followed
+    "statuses_count": int,         # Number of tweets
+    "media_count": int,            # Number of media posts
+    "created_at": str,             # Account creation date
+    "location": str,               # Location string
+    "blue_verified": bool,         # X Blue verification status
+    "verified": bool,              # Legacy verification status
+    "website": str,                # Website URL
+    "business_account": bool,      # Business account status
+    "description": str,            # Account bio
+    "ratio": float,                # Followers to following ratio
+    "direct": bool,                # Whether directly connected to original
+    "tweets": List[Dict],          # List of tweet data
+    "tweet_summary": str,          # AI-generated summary of tweets
+    "community_color": str         # Color assigned based on community
+}
+```
+
+### 2. Tweet Structure
+
+Tweets have this structure:
+
+```python
+tweet = {
+    "text": str,                   # Tweet text
+    "date": str,                   # Formatted date
+    "likes": int,                  # Like count
+    "retweets": int,               # Retweet count
+    "replies": int,                # Reply count
+    "quotes": int,                 # Quote count
+    "total_engagement": int,       # Sum of engagement metrics
+    "is_retweet": bool             # Whether it's a retweet
+}
+```
+
+### 3. Community Data Structures
+
+```python
+# Maps community IDs to descriptive labels
+community_labels = {
+    "0": "Tech Entrepreneurs",
+    "1": "Political Commentators",
+    "2": "News Media",
+    "3": "Other"
+}
+
+# Maps community IDs to color codes
+community_colors = {
+    "0": "#ff7700",
+    "1": "#0077ff",
+    "2": "#00ff77",
+    "3": "#cccccc"
+}
+
+# Maps usernames to community IDs
+node_communities = {
+    "elonmusk": "0",
+    "cnn": "2",
+    "nytimes": "2"
+}
+```
+
+## Application Workflow
+
+1. **Data Collection**:
+   - User enters X username
+   - App retrieves following network via X API
+   - Optional: fetch and summarize tweets
+
+2. **Data Processing**:
+   - Calculate network metrics (CloutRank, In-Degree)
+   - Apply filters based on user preferences
+   - Select top accounts for visualization
+
+3. **Visualization**:
+   - Build 3D network visualization
+   - Generate data tables
+
+4. **Community Detection** (optional):
+   - Analyze account descriptions and tweets
+   - Generate community labels
+   - Classify accounts into communities
+   - Apply community colors to visualization
+
+5. **Data Export**:
+   - Create comprehensive CSV with all metrics
+
+## API Dependencies
+
+1. **X/Twitter API** (via RapidAPI):
+   - Used for retrieving following networks and tweets
+
+2. **Google Gemini API**:
+   - Used for generating tweet summaries
+   - Used for community detection and classification
+
+## Third-Party Libraries
+
+- **streamlit**: UI framework
+- **aiohttp**: Asynchronous HTTP requests
+- **networkx**: Graph algorithms
+- **pandas**: Data manipulation
+- **three.js** and **force-graph-3d** (via CDN): 3D visualization
