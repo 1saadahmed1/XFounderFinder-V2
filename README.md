@@ -1,10 +1,9 @@
 # X Network Visualization
 
-An interactive 3D visualization tool for exploring X (formerly Twitter) following networks. This application allows users to analyze the network structure, identify influential accounts, detect communities, and generate summaries of tweet content.
+An interactive Founder finding tool for exploring X (formerly Twitter) following networks. This application allows users to analyze the network structure, identify influential accounts, detect communities, and generate summaries of tweet content.
 
 ## Features
 
-- **3D Force-Directed Graph Visualization** with permanent node labels, directional arrows, and interactive controls
 - **Topic Nodes** that connect to accounts discussing similar topics
 - **Network Analysis** using CloutRank (PageRank) or In-Degree metrics
 - **Community Detection** powered by AI to group accounts by similar topics and interests
@@ -25,7 +24,7 @@ An interactive 3D visualization tool for exploring X (formerly Twitter) followin
 
 1. Clone this repository:
    ```
-   git clone https://github.com/BrianMills2718/x-network-viz.git
+   git clone https://github.com/1saadahmed1/XFounderFinder
    cd x-network-viz
    ```
 
@@ -73,13 +72,6 @@ streamlit run app.py
    - Topics discussed across accounts
 8. **Export Data** using the download button in the sidebar
 
-## Visualization Features
-
-- **Directional Arrows**: Clearly see relationship directions between accounts with arrow heads and curved edges
-- **Topic Nodes**: Diamond-shaped nodes represent topics with connections to related accounts
-- **Interactive Controls**: Click nodes to focus the camera, drag to rotate, scroll to zoom
-- **Customizable Display**: Adjust node sizes, colors, and filtering to create the perfect visualization
-
 ## Project Structure
 
 ```
@@ -95,7 +87,6 @@ network_viz_app/
 │   ├── processing.py       # Data processing utilities
 │   └── communities.py      # Community detection
 ├── visualization/          # Visualization components
-│   ├── network_3d.py       # 3D network visualization
 │   └── tables.py           # Table generation
 └── utils/                  # Utility functions
     ├── helpers.py          # State management & helpers
@@ -119,8 +110,6 @@ This project is available under a dual license:
 See the [LICENSE.md](LICENSE.md) file for full details.
 
 ## Acknowledgements
-
-- Force Graph 3D for the visualization engine
 - Streamlit for the web application framework
 - NetworkX for graph algorithms
 - Google Gemini API for AI-powered analysis
