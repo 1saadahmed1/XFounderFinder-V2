@@ -5,3 +5,4 @@ plotly
 pandas
 streamlit
 aiohttp
+protobuf>=3.20.2,<6.0.0
