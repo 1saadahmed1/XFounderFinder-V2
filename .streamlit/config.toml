@@ -9,4 +9,11 @@ textColor = "#000000ff"
 gatherUsageStats = false
 
 [client]
-toolbarMode = "minimal" 
+toolbarMode = "minimal"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+port = 8080
+address = "0.0.0.0"
