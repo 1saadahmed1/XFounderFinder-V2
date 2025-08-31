@@ -1,5 +1,5 @@
 """
-AI client for Gemini API interactions.
+Enhanced AI client for Gemini API with structured candidate analysis.
 """
 import json
 import re
@@ -13,32 +13,18 @@ from google.api_core.exceptions import GoogleAPIError, RetryError
 
 from config import GEMINI_API_KEY, MAX_CONCURRENT_REQUESTS, DEFAULT_BATCH_SIZE
 
-# Set up logger
 logger = logging.getLogger(__name__)
 
 class AIClient:
-    """Client for interacting with Google's Gemini API."""
+    """Enhanced client for Google's Gemini API with structured analysis."""
     
     def __init__(self, api_key: str = GEMINI_API_KEY):
-        """
-        Initialize the Gemini AI client.
-        
-        Args:
-            api_key: Gemini API key
-        """
         self.api_key = api_key
-        # We will use the model that is best for this type of task.
         self.model_name = "gemini-1.5-pro-latest"
         self._max_concurrent = MAX_CONCURRENT_REQUESTS
         self._semaphores = {}
         
     def _get_semaphore(self):
-        """
-        Get or create a semaphore for the current event loop.
-        
-        Returns:
-            asyncio.Semaphore: A semaphore attached to the current event loop
-        """
         loop = asyncio.get_event_loop()
         loop_id = id(loop)
         
@@ -48,26 +34,10 @@ class AIClient:
         return self._semaphores[loop_id]
     
     def _initialize_client(self) -> Any:
-        """
-        Initialize Gemini client.
-        
-        Returns:
-            Gemini GenerativeModel
-        """
         genai.configure(api_key=self.api_key)
         return genai.GenerativeModel(self.model_name)
     
     async def _make_api_call_with_retries(self, prompt: str, max_retries: int = 3) -> Optional[str]:
-        """
-        A centralized, robust method to make Gemini API calls with retries and exponential backoff.
-        
-        Args:
-            prompt: The prompt text for the Gemini model.
-            max_retries: The maximum number of retries.
-            
-        Returns:
-            The raw text response from the API, or None on failure.
-        """
         base_delay = 1.0
 
         for retry_count in range(max_retries):
@@ -75,7 +45,6 @@ class AIClient:
                 client = self._initialize_client()
                 response = await client.generate_content_async(prompt)
                 
-                # Check for an empty or invalid response
                 if not response.text:
                     raise ValueError("API returned an empty response.")
                 
@@ -88,137 +57,279 @@ class AIClient:
                     logger.info(f"Retrying in {wait_time:.1f}s...")
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"All {max_retries} retries failed for API call. Giving up.")
+                    logger.error(f"All {max_retries} retries failed. Giving up.")
                     return None
             except Exception as e:
-                logger.error(f"Unexpected error during API call (attempt {retry_count + 1}/{max_retries}): {e}")
+                logger.error(f"Unexpected error: {e}")
                 return None
     
     async def search_for_candidates(self, profiles: List[Dict], user_prompt: str) -> Dict[str, Any]:
-        """
-        Uses Gemini to analyze a list of profiles and find candidates based on a user's prompt.
-
-        Args:
-            profiles: A list of profile dictionaries to analyze.
-            user_prompt: A string describing the ideal candidate.
-
-        Returns:
-            A dictionary containing the AI's analysis and a list of candidates.
-        """
+        """Enhanced candidate search with structured analysis and tweet evidence."""
         async with self._get_semaphore():
-            # Prepare the data to be sent to the AI
             profiles_for_ai = []
+            total_profiles = len(profiles)
+            
             for p in profiles:
+                influence_raw = p.get("influence_score", 0)
+                influence_percentage = influence_raw * 100 if influence_raw else 0
+                
+                # Extract tweet examples if available
+                tweet_examples = []
+                if hasattr(p, 'tweets') and p.get('tweets'):
+                    tweets = p.get('tweets', [])
+                    top_tweets = sorted(tweets, key=lambda t: t.get("total_engagement", 0), reverse=True)[:3]
+                    tweet_examples = [t.get("text", "")[:180] for t in top_tweets if t.get("text")]
+                elif p.get("tweet_summary"):
+                    tweet_examples = [f"Summary: {p.get('tweet_summary')[:180]}"]
+                
                 profile_info = {
-                    "username": p.get("screen_name"),
-                    "bio": p.get("description"),
-                    "location": p.get("location"),
-                    "followers_count": p.get("followers_count"),
-                    "following_count": p.get("friends_count"),
-                    "tweet_count": p.get("statuses_count"),
+                    "username": p.get("screen_name", ""),
+                    "name": p.get("name", ""),
+                    "bio": p.get("description", ""),
+                    "location": p.get("location", ""),
+                    "followers_count": p.get("followers_count", 0),
+                    "following_count": p.get("friends_count", 0),
+                    "tweet_count": p.get("statuses_count", 0),
+                    "verified": p.get("verified", False),
+                    "influence_score": influence_raw,
+                    "influence_percentage": f"{influence_percentage:.3f}%",
+                    "estimated_influence_reach": int(influence_percentage * total_profiles / 100) if total_profiles > 0 else 0,
+                    "mutual_connections": p.get("mutual_connections", 0),
+                    "tweet_summary": p.get("tweet_summary", ""),
+                    "recent_tweet_examples": tweet_examples,
+                    "connection_path": p.get("connection_path", ""),
+                    "activity_level": "High" if p.get("statuses_count", 0) > 1000 else "Moderate" if p.get("statuses_count", 0) > 100 else "Low"
                 }
                 profiles_for_ai.append(profile_info)
 
-            # Construct the prompt for the AI
-            prompt = f"""You are an expert talent scout and HR professional. Your task is to analyze a list of X/Twitter profiles and identify promising candidates for a specific role based on a user's request.
+            # Enhanced prompt with systematic scoring
+            prompt = f"""You are a senior executive recruiter analyzing Twitter profiles for: "{user_prompt}"
 
-Here is the user's request:
-"{user_prompt}"
+SCORING FRAMEWORK (Rate each candidate 1-100):
+- Role Fit (40 points): Experience, skills, industry match from bio
+- Influence & Network (25 points): Followers, network position, thought leadership
+- Technical Evidence (25 points): Skills shown in tweets/bio content  
+- Accessibility (10 points): Response likelihood, seniority level
 
-Here is the list of X/Twitter profiles in JSON format:
+INFLUENCE CONTEXT:
+- Scores show % of THIS {total_profiles}-person network that follows each person
+- 1.6% = ~{int(1.6 * total_profiles / 100)} followers in this sample
+- Higher % = more recognition in this specific community
+
+PROFILES WITH EVIDENCE:
 {json.dumps(profiles_for_ai, indent=2)}
 
-Please review each profile and select only the ones that are a strong match for the user's request. For each promising candidate, provide a brief, professional justification for your choice.
+REQUIREMENTS:
+1. Score each section systematically (role_fit, influence_network, technical_evidence, accessibility)
+2. Quote specific tweet content as evidence when available
+3. Reference exact bio details that match requirements
+4. Rank candidates by total score (highest first)
+5. Assign tiers: A (80-100), B (60-79), C (40-59), D (<40)
+6. Include red flags and concerns
 
-Return your response in a single JSON object with the following structure:
+Return ONLY this JSON structure:
 ```json
 {{
     "candidates": [
         {{
-            "username": "candidate_username_1",
-            "reasoning": "A concise explanation of why this candidate is a strong fit.",
-            "profile_url": "[https://x.com/candidate_username_1](https://x.com/candidate_username_1)"
-        }},
-        {{
-            "username": "candidate_username_2",
-            "reasoning": "A concise explanation of why this candidate is a strong fit.",
-            "profile_url": "[https://x.com/candidate_username_2](https://x.com/candidate_username_2)"
+            "username": "candidate_username",
+            "total_score": 87,
+            "scores": {{
+                "role_fit": 35,
+                "influence_network": 22,
+                "technical_evidence": 23,
+                "accessibility": 7
+            }},
+            "rank": 1,
+            "tier": "A",
+            "reasoning": "Detailed 3-4 sentence analysis covering specific bio details, influence explanation (e.g., 'Their 1.6% influence means ~8 people in this network follow them'), and tweet evidence. Example: 'Recent tweet: \\"Just shipped our ML pipeline with 40% better performance\\" shows hands-on technical skills.'",
+            "key_strengths": ["Specific strength with evidence", "Another strength with metrics", "Third strength"],
+            "concerns": ["Specific concern with reasoning"],
+            "outreach_approach": "LinkedIn message referencing their recent work on [specific topic from tweets/bio]"
         }}
-    ]
+    ],
+    "analysis_summary": "Overview of candidate pool quality and key insights"
 }}
-If no suitable candidates are found, return an empty list in the "candidates" key.
-"""
+```
+
+Focus on SPECIFIC EVIDENCE from actual tweets and bio content, not generic assessments. Rank by total_score descending."""
+
             response_text = await self._make_api_call_with_retries(prompt)
 
         if response_text:
             try:
-                # Use a regex to extract the JSON from the text, as the AI might wrap it in markdown.
-                # The re.DOTALL flag ensures that the . matches newlines.
                 json_match = re.search(r'```json\s*(\{.*\})\s*```', response_text, re.DOTALL)
                 if json_match:
                     response_json_string = json_match.group(1)
                 else:
-                    # Fallback to assuming the whole response is JSON if no markdown is found
-                    response_json_string = response_text
+                    response_json_string = response_text.strip()
                     
                 ai_response = json.loads(response_json_string)
+                
                 if "candidates" in ai_response and isinstance(ai_response["candidates"], list):
+                    # Sort by total_score and re-assign ranks
+                    candidates = ai_response["candidates"]
+                    candidates.sort(key=lambda x: x.get("total_score", 0), reverse=True)
+                    
+                    for i, candidate in enumerate(candidates, 1):
+                        candidate["rank"] = i
+                        score = candidate.get("total_score", 0)
+                        if score >= 80:
+                            candidate["tier"] = "A"
+                        elif score >= 60:
+                            candidate["tier"] = "B"
+                        elif score >= 40:
+                            candidate["tier"] = "C"
+                        else:
+                            candidate["tier"] = "D"
+                    
+                    ai_response["candidates"] = candidates
+                    logger.info(f"Successfully parsed and ranked {len(candidates)} candidates")
                     return ai_response
                 else:
-                    logger.error(f"AI response format was incorrect: {response_text}")
-                    return {"candidates": []}
+                    logger.error("Invalid response format - missing candidates array")
+                    return {"candidates": [], "analysis_summary": "Failed to parse candidates"}
+                    
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse AI response as JSON: {e}\nRaw Response: {response_text}")
-                return {"candidates": []}
+                logger.error(f"Failed to parse JSON: {e}")
+                return {"candidates": [], "analysis_summary": f"JSON parsing error: {e}"}
         else:
-            return {"candidates": []}
+            logger.error("No response received from AI API")
+            return {"candidates": [], "analysis_summary": "No AI response received"}
 
-# The following methods are not needed for the new functionality and will be kept but not used by the new app logic.
-# I recommend removing them in a later refactor for a cleaner codebase.
-async def generate_tweet_summary(self, tweets: List[Dict], username: str) -> str:
-    """
-    Generate an AI summary of tweets using Gemini API.
-    """
-    # ... (original code remains the same) ...
-    return ""
+    async def generate_tweet_summary(self, tweets: List[Dict], username: str) -> str:
+        """Generate an AI summary of tweets for profile analysis."""
+        if not tweets:
+            return ""
+        
+        async with self._get_semaphore():
+            tweet_texts = []
+            for tweet in tweets[:15]:
+                text = tweet.get("text", "")
+                engagement = tweet.get("total_engagement", 0)
+                if text:
+                    tweet_texts.append(f"[{engagement} eng] {text}")
+            
+            if not tweet_texts:
+                return "No tweet content available"
+            
+            prompt = f"""Analyze tweets from @{username} for professional assessment:
 
-async def generate_batch_tweet_summaries(self, batch_data: List[Tuple],
-                                         batch_size: int = DEFAULT_BATCH_SIZE,
-                                         max_retries: int = 3) -> Dict[str, str]:
-    """
-    Generate summaries for multiple accounts in a single API call.
-    """
-    # ... (original code remains the same) ...
-    return {}
+Tweets:
+{chr(10).join(tweet_texts)}
 
-async def generate_community_labels(self, accounts: List[Dict],
-                                    num_communities: int,
-                                    max_retries: int = 3) -> Dict[str, str]:
-    """
-    Get community labels from Gemini using account descriptions.
-    """
-    # ... (original code remains the same) ...
-    return {}
+Provide 2-3 sentence summary covering:
+1. Primary expertise/industry focus
+2. Technical skills demonstrated  
+3. Thought leadership level
 
-async def classify_accounts(self, accounts: List[Dict],
-                            community_labels: Dict[str, str],
-                            max_retries: int = 3) -> Dict[str, str]:
-    """
-    Classify accounts into communities.
-    """
-    # ... (original code remains the same) ...
-    return {}
-    
-async def extract_topics_from_tweets(self, accounts: List[Dict], max_retries: int = 3) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
-    """
-    Extract topics from tweet summaries and descriptions of accounts.
-    """
-    # ... (original code remains the same) ...
-    return {}, {}
-    
-async def summarize_user_tweets(self, username: str, tweet_text: str) -> str:
-    """
-    Generate an AI summary of tweets using Gemini API specifically for the original user.
-    """
-    # ... (original code remains the same) ...
-    return ""
+Focus on career-relevant insights:"""
+
+            response = await self._make_api_call_with_retries(prompt)
+            return response if response else "Unable to generate summary"
+
+    async def generate_community_labels(self, accounts: List[Dict], 
+                                       num_communities: int) -> Dict[str, str]:
+        """Generate community labels from account descriptions and tweets."""
+        async with self._get_semaphore():
+            account_summaries = []
+            for acc in accounts[:150]:
+                summary_parts = []
+                if acc.get('description'):
+                    summary_parts.append(acc['description'])
+                if acc.get('tweet_summary'):
+                    summary_parts.append(acc['tweet_summary'])
+                
+                if summary_parts:
+                    combined_summary = f"@{acc.get('screen_name', '')}: {' | '.join(summary_parts)}"
+                    account_summaries.append(combined_summary)
+            
+            prompt = f"""Analyze these accounts and create {num_communities} distinct professional communities.
+
+Focus on:
+- Industry/domain (AI/ML, SaaS, Climate Tech)
+- Role type (Engineers, Founders, Product Managers)
+- Specialization (Research, Growth, Infrastructure)
+
+Account data:
+{chr(10).join(account_summaries[:100])}
+
+Return JSON with specific, professional labels:
+```json
+{{
+    "0": "AI/ML Engineers & Researchers",
+    "1": "B2B SaaS Founders & Executives", 
+    "2": "Product & Growth Leaders",
+    ...
+}}
+```
+
+Make labels specific and mutually exclusive."""
+
+            response = await self._make_api_call_with_retries(prompt)
+            
+            if response:
+                try:
+                    json_match = re.search(r'```json\s*(\{.*\})\s*```', response, re.DOTALL)
+                    if json_match:
+                        labels = json.loads(json_match.group(1))
+                        return labels
+                except Exception as e:
+                    logger.error(f"Error parsing community labels: {e}")
+            
+            return {str(i): f"Professional Group {i+1}" for i in range(num_communities)}
+
+    async def classify_accounts(self, accounts: List[Dict], 
+                               community_labels: Dict[str, str]) -> Dict[str, str]:
+        """Classify accounts into detected communities."""
+        async with self._get_semaphore():
+            classifications = {}
+            
+            batch_size = 40
+            for i in range(0, len(accounts), batch_size):
+                batch = accounts[i:i+batch_size]
+                
+                account_data = []
+                for acc in batch:
+                    account_info = {
+                        "username": acc.get("screen_name", ""),
+                        "bio": acc.get("description", ""),
+                        "tweet_summary": acc.get("tweet_summary", "")
+                    }
+                    account_data.append(account_info)
+                
+                prompt = f"""Classify accounts into communities based on bios and activity.
+
+Communities:
+{json.dumps(community_labels, indent=2)}
+
+Accounts:
+{json.dumps(account_data, indent=2)}
+
+Guidelines:
+- Match job titles, companies, skills in bios
+- Use tweet summaries for current focus
+- Choose single best-fitting community
+
+Return JSON mapping usernames to community IDs:
+```json
+{{
+    "username1": "0",
+    "username2": "1",
+    ...
+}}
+```"""
+
+                response = await self._make_api_call_with_retries(prompt)
+                
+                if response:
+                    try:
+                        json_match = re.search(r'```json\s*(\{.*\})\s*```', response, re.DOTALL)
+                        if json_match:
+                            batch_classifications = json.loads(json_match.group(1))
+                            classifications.update(batch_classifications)
+                    except Exception as e:
+                        logger.error(f"Error parsing batch classifications: {e}")
+                        continue
+            
+            return classifications

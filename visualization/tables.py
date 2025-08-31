@@ -1,5 +1,5 @@
 """
-Table visualization utilities for X Network Visualization.
+Enhanced table visualization with structured candidate results, color coding, and systematic ranking.
 """
 import logging
 from typing import Dict, List, Tuple, Optional, Any
@@ -7,28 +7,16 @@ from typing import Dict, List, Tuple, Optional, Any
 import streamlit as st
 import pandas as pd
 
-# Assuming this is available and correctly implemented
-from data.network import NetworkData
-
 logger = logging.getLogger(__name__)
 
 class TableVisualizer:
     """
-    Visualizer for data tables.
+    Enhanced visualizer with structured candidate analysis display.
     """
     
     @staticmethod
     def format_text_with_line_breaks(text: str, max_line_length: int = 80) -> str:
-        """
-        Format text with line breaks at word boundaries for better readability in tables.
-        
-        Args:
-            text: Text to format
-            max_line_length: Maximum length for each line
-            
-        Returns:
-            Formatted text with line breaks
-        """
+        """Format text with line breaks for better readability."""
         if not text:
             return ""
             
@@ -55,122 +43,348 @@ class TableVisualizer:
         return "\n".join(lines)
     
     @staticmethod
-    def apply_table_styles():
-        """
-        Apply custom CSS styling to make tables more readable, particularly in dark mode.
-        """
+    def apply_enhanced_table_styles():
+        """Apply enhanced CSS styling with color coding for tiers."""
         table_styles = """
         <style>
-            .stTable {
-                width: 100% !important;
-                overflow-x: auto !important;
+            .candidate-results {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             }
-            .stTable table {
-                min-width: 1000px;
-                padding: 1em;
+            .tier-a { 
+                background: linear-gradient(135deg, #4CAF50, #45a049) !important; 
+                color: white !important; 
+                font-weight: bold !important;
+            }
+            .tier-b { 
+                background: linear-gradient(135deg, #2196F3, #1976D2) !important; 
+                color: white !important; 
+                font-weight: bold !important;
+            }
+            .tier-c { 
+                background: linear-gradient(135deg, #FF9800, #F57C00) !important; 
+                color: white !important; 
+                font-weight: bold !important;
+            }
+            .tier-d { 
+                background: linear-gradient(135deg, #f44336, #d32f2f) !important; 
+                color: white !important; 
+                font-weight: bold !important;
+            }
+            .candidate-header {
+                font-size: 18px;
+                font-weight: bold;
+                margin-bottom: 15px;
+                padding: 10px;
+                border-radius: 8px;
+                text-align: center;
+            }
+            .score-breakdown {
+                display: flex;
+                justify-content: space-between;
+                margin: 10px 0;
+                padding: 10px;
+                background-color: rgba(255, 255, 255, 0.1);
+                border-radius: 5px;
+            }
+            .score-item {
+                text-align: center;
+                flex: 1;
+                margin: 0 5px;
+            }
+            .score-label {
+                font-size: 12px;
+                color: #666;
+                margin-bottom: 3px;
+            }
+            .score-value {
+                font-size: 16px;
+                font-weight: bold;
+            }
+            .evidence-section {
+                margin: 10px 0;
+                padding: 10px;
+                background-color: rgba(0, 0, 0, 0.05);
+                border-radius: 5px;
+                border-left: 4px solid #2196F3;
+            }
+            .strength-item {
+                margin: 5px 0;
+                padding: 5px 10px;
+                background-color: rgba(76, 175, 80, 0.1);
+                border-radius: 3px;
+                border-left: 3px solid #4CAF50;
+            }
+            .concern-item {
+                margin: 5px 0;
+                padding: 5px 10px;
+                background-color: rgba(255, 152, 0, 0.1);
+                border-radius: 3px;
+                border-left: 3px solid #FF9800;
+            }
+            .outreach-strategy {
+                margin: 10px 0;
+                padding: 10px;
+                background-color: rgba(33, 150, 243, 0.1);
+                border-radius: 5px;
+                border: 1px solid #2196F3;
+            }
+            .tweet-quote {
+                font-style: italic;
+                padding: 8px;
+                margin: 5px 0;
+                background-color: rgba(0, 0, 0, 0.05);
+                border-left: 3px solid #9C27B0;
+                border-radius: 3px;
+            }
+            .rank-badge {
+                display: inline-block;
+                padding: 4px 8px;
+                border-radius: 15px;
                 font-size: 14px;
+                font-weight: bold;
+                color: white;
+                margin-right: 10px;
             }
-            .stTable thead tr {
-                background-color: rgba(108, 166, 205, 0.3);
-            }
-            .stTable thead th {
-                padding: 12px !important;
-                font-weight: bold !important;
-                color: white !important;
-                text-align: left !important;
-                position: sticky !important;
-                top: 0 !important;
-                z-index: 1 !important;
-                background-color: rgb(38, 39, 48) !important;
-                border-bottom: 2px solid rgba(108, 166, 205, 0.7) !important;
-            }
-            .stTable tbody tr {
-                border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
-            }
-            .stTable tbody tr:nth-child(even) {
-                background-color: rgba(255, 255, 255, 0.05) !important;
-            }
-            .stTable tbody tr:hover {
-                background-color: rgba(108, 166, 205, 0.2) !important;
-            }
-            .stTable tbody td {
-                padding: 10px !important;
-                text-align: left !important;
-                white-space: pre-line !important;
-                word-wrap: break-word !important;
-                max-width: 300px !important;
-                line-height: 1.4 !important;
-            }
-            .stTable tbody td:nth-child(8) {
-                white-space: pre-line !important;
-                max-height: 150px !important;
-                overflow-y: auto !important;
-            }
-            .stTable tbody td:nth-child(9) {
-                white-space: pre-line !important;
-                max-height: 150px !important;
-                overflow-y: auto !important;
-            }
-            .stTable tbody td:nth-child(2) {
-                font-weight: bold !important;
-                white-space: nowrap !important;
-            }
-            .connection-original {
-                color: #ff9d00 !important;
-                font-weight: bold !important;
-            }
-            .connection-first {
-                color: #00c3ff !important;
-                font-weight: bold !important;
-            }
-            .connection-second {
-                color: #8bc34a !important;
-                font-weight: bold !important;
-            }
+            .rank-1 { background: #FFD700; color: #000; }
+            .rank-2 { background: #C0C0C0; color: #000; }
+            .rank-3 { background: #CD7F32; color: #fff; }
+            .rank-other { background: #666; color: #fff; }
         </style>
         """
         st.markdown(table_styles, unsafe_allow_html=True)
-        
-        js = """
-        <script>
-            function styleConnectionCells() {
-                const tables = document.querySelectorAll('.stTable table');
-                if (!tables.length) return;
-                tables.forEach(table => {
-                    let connectionIdx = -1;
-                    const headers = table.querySelectorAll('thead th');
-                    headers.forEach((header, idx) => {
-                        if (header.textContent.includes('Connection')) {
-                            connectionIdx = idx;
-                        }
-                    });
-                    if (connectionIdx === -1) return;
-                    const rows = table.querySelectorAll('tbody tr');
-                    rows.forEach(row => {
-                        const cell = row.cells[connectionIdx];
-                        if (!cell) return;
-                        const text = cell.textContent.trim();
-                        if (text.includes('Original')) {
-                            cell.classList.add('connection-original');
-                        } else if (text.includes('1st Degree')) {
-                            cell.classList.add('connection-first');
-                        } else if (text.includes('2nd Degree')) {
-                            cell.classList.add('connection-second');
-                        }
-                    });
-                });
-            }
-            document.addEventListener("DOMContentLoaded", function() {
-                styleConnectionCells();
-                const observer = new MutationObserver(function(mutations) {
-                    styleConnectionCells();
-                });
-                observer.observe(document.body, { childList: true, subtree: true });
-            });
-        </script>
-        """
-        st.markdown(js, unsafe_allow_html=True)
     
+    @staticmethod
+    def display_structured_candidate_results(ai_response: Dict[str, Any]) -> None:
+        """
+        Display structured, color-coded candidate results with systematic analysis.
+        """
+        if not ai_response or not ai_response.get("candidates"):
+            st.info("No candidates found matching your criteria.")
+            return
+        
+        candidates = ai_response["candidates"]
+        analysis_summary = ai_response.get("analysis_summary", "")
+        methodology = ai_response.get("methodology", "")
+        
+        # Apply enhanced styling
+        TableVisualizer.apply_enhanced_table_styles()
+        
+        # Display header with summary
+        st.markdown('<div class="candidate-results">', unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.subheader("🎯 AI Candidate Analysis Results")
+        with col2:
+            st.metric("Candidates Found", len(candidates))
+        with col3:
+            if candidates:
+                avg_score = sum(c.get("total_score", 0) for c in candidates) / len(candidates)
+                st.metric("Average Score", f"{avg_score:.1f}/100")
+        
+        if analysis_summary:
+            st.info(f"**Analysis Summary:** {analysis_summary}")
+        
+        if methodology:
+            with st.expander("📋 Evaluation Methodology", expanded=False):
+                st.write(methodology)
+        
+        # Display candidates in structured format
+        st.markdown("### 🏆 Ranked Candidate Analysis")
+        
+        # Create tier summaries
+        tier_counts = {"A": 0, "B": 0, "C": 0, "D": 0}
+        for candidate in candidates:
+            tier = candidate.get("tier", "D")
+            tier_counts[tier] += 1
+        
+        # Show tier distribution
+        tier_cols = st.columns(4)
+        tier_colors = {"A": "#4CAF50", "B": "#2196F3", "C": "#FF9800", "D": "#f44336"}
+        for i, (tier, count) in enumerate(tier_counts.items()):
+            with tier_cols[i]:
+                if count > 0:
+                    st.markdown(f'''
+                    <div style="background-color: {tier_colors[tier]}; color: white; padding: 10px; border-radius: 5px; text-align: center;">
+                        <strong>Tier {tier}</strong><br>{count} candidates
+                    </div>
+                    ''', unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Display each candidate
+        for candidate in candidates:
+            TableVisualizer._display_single_candidate(candidate)
+            st.markdown("---")
+        
+        # Create downloadable summary
+        TableVisualizer._create_candidate_download(candidates)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    @staticmethod
+    def _display_single_candidate(candidate: Dict[str, Any]) -> None:
+        """Display a single candidate with structured analysis."""
+        username = candidate.get("username", "Unknown")
+        total_score = candidate.get("total_score", 0)
+        rank = candidate.get("rank", 0)
+        tier = candidate.get("tier", "D")
+        scores = candidate.get("scores", {})
+        analysis = candidate.get("analysis", {})
+        strengths = candidate.get("strengths", [])
+        concerns = candidate.get("concerns", [])
+        outreach = candidate.get("outreach_strategy", {})
+        
+        # Tier colors
+        tier_class = f"tier-{tier.lower()}"
+        
+        # Rank badge
+        if rank == 1:
+            rank_class = "rank-1"
+        elif rank == 2:
+            rank_class = "rank-2"
+        elif rank == 3:
+            rank_class = "rank-3"
+        else:
+            rank_class = "rank-other"
+        
+        # Header with rank and tier
+        st.markdown(f'''
+        <div class="candidate-header {tier_class}">
+            <span class="rank-badge {rank_class}">#{rank}</span>
+            @{username} - Tier {tier} - Score: {total_score}/100
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        # Score breakdown
+        if scores:
+            st.markdown(f'''
+            <div class="score-breakdown">
+                <div class="score-item">
+                    <div class="score-label">Role Fit</div>
+                    <div class="score-value">{scores.get("role_fit", 0)}/40</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-label">Influence</div>
+                    <div class="score-value">{scores.get("influence_network", 0)}/25</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-label">Technical</div>
+                    <div class="score-value">{scores.get("technical_evidence", 0)}/25</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-label">Access</div>
+                    <div class="score-value">{scores.get("accessibility", 0)}/10</div>
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
+        
+        # Analysis sections
+        col1, col2 = st.columns([3, 2])
+        
+        with col1:
+            # Role fit evidence
+            if analysis.get("role_fit_evidence"):
+                st.markdown(f'''
+                <div class="evidence-section">
+                    <strong>🎯 Role Fit Analysis:</strong><br>
+                    {analysis["role_fit_evidence"]}
+                </div>
+                ''', unsafe_allow_html=True)
+            
+            # Technical skills
+            if analysis.get("technical_skills"):
+                st.markdown(f'''
+                <div class="evidence-section">
+                    <strong>⚡ Technical Evidence:</strong><br>
+                    {analysis["technical_skills"]}
+                </div>
+                ''', unsafe_allow_html=True)
+            
+            # Recent activity with tweet quotes
+            if analysis.get("recent_activity"):
+                st.markdown(f'''
+                <div class="tweet-quote">
+                    <strong>📱 Recent Activity:</strong><br>
+                    {analysis["recent_activity"]}
+                </div>
+                ''', unsafe_allow_html=True)
+        
+        with col2:
+            # Influence explanation
+            if analysis.get("influence_explanation"):
+                st.markdown(f'''
+                <div class="evidence-section">
+                    <strong>📊 Network Influence:</strong><br>
+                    {analysis["influence_explanation"]}
+                </div>
+                ''', unsafe_allow_html=True)
+            
+            # Strengths
+            if strengths:
+                st.markdown("<strong>✅ Key Strengths:</strong>")
+                for strength in strengths:
+                    st.markdown(f'<div class="strength-item">• {strength}</div>', unsafe_allow_html=True)
+            
+            # Concerns
+            if concerns:
+                st.markdown("<strong>⚠️ Concerns:</strong>")
+                for concern in concerns:
+                    st.markdown(f'<div class="concern-item">• {concern}</div>', unsafe_allow_html=True)
+        
+        # Outreach strategy
+        if outreach and any(outreach.values()):
+            st.markdown(f'''
+            <div class="outreach-strategy">
+                <strong>📞 Outreach Strategy:</strong><br>
+                <strong>Approach:</strong> {outreach.get("approach", "Not specified")}<br>
+                <strong>Conversation Starter:</strong> {outreach.get("conversation_starter", "Not specified")}<br>
+                <strong>Best Timing:</strong> {outreach.get("best_timing", "Not specified")}
+            </div>
+            ''', unsafe_allow_html=True)
+    
+    @staticmethod
+    def _create_candidate_download(candidates: List[Dict[str, Any]]) -> None:
+        """Create downloadable CSV of candidate analysis."""
+        download_data = []
+        for candidate in candidates:
+            scores = candidate.get("scores", {})
+            analysis = candidate.get("analysis", {})
+            outreach = candidate.get("outreach_strategy", {})
+            
+            row = {
+                "Rank": candidate.get("rank", 0),
+                "Username": candidate.get("username", ""),
+                "Total Score": candidate.get("total_score", 0),
+                "Tier": candidate.get("tier", ""),
+                "Role Fit Score": scores.get("role_fit", 0),
+                "Influence Score": scores.get("influence_network", 0),
+                "Technical Score": scores.get("technical_evidence", 0),
+                "Accessibility Score": scores.get("accessibility", 0),
+                "Role Fit Evidence": analysis.get("role_fit_evidence", ""),
+                "Technical Skills": analysis.get("technical_skills", ""),
+                "Influence Explanation": analysis.get("influence_explanation", ""),
+                "Recent Activity": analysis.get("recent_activity", ""),
+                "Key Strengths": "; ".join(candidate.get("strengths", [])),
+                "Concerns": "; ".join(candidate.get("concerns", [])),
+                "Outreach Approach": outreach.get("approach", ""),
+                "Conversation Starter": outreach.get("conversation_starter", ""),
+                "Best Timing": outreach.get("best_timing", "")
+            }
+            download_data.append(row)
+        
+        if download_data:
+            df = pd.DataFrame(download_data)
+            csv_data = df.to_csv(index=False)
+            
+            st.download_button(
+                label="📄 Download Detailed Analysis (CSV)",
+                data=csv_data,
+                file_name="candidate_analysis_detailed.csv",
+                mime="text/csv",
+                help="Download complete candidate analysis with scores and evidence"
+            )
+
     @staticmethod
     def display_top_accounts_table(
         nodes: Dict[str, Dict],
@@ -180,46 +394,34 @@ class TableVisualizer:
         top_accounts: List[Dict[str, Any]],
         original_id: str,
         show_tweet_summaries: bool = False,
-        importance_metric: str = "CloutRank"
+        importance_metric: str = "CloutRank",
+        max_display: int = 50
     ) -> None:
-        """
-        Display table of top accounts based on importance scores.
-        
-        This method has been corrected to handle potential None values in all
-        formatted numeric fields, providing a definitive fix for the error.
-        
-        This version is also corrected to properly identify and label the
-        original seed account.
-        """
+        """Display table of top accounts with enhanced formatting."""
         st.subheader(f"Top Accounts by {importance_metric}")
         
-        TableVisualizer.apply_table_styles()
+        display_accounts = top_accounts[:max_display]
+        if len(top_accounts) > max_display:
+            st.info(f"Displaying top {max_display} of {len(top_accounts)} accounts for performance")
         
         rows_list = []
-        
-        # This will hold the normalized username, e.g., 'elonmusk'
-        normalized_original_id = original_id.replace('@', '').lower()
+        normalized_original_id = original_id.replace('@', '').lower() if original_id else ""
 
-        for idx, account_data in enumerate(top_accounts, 1):
+        for idx, account_data in enumerate(display_accounts, 1):
             node_id = account_data.get('username')
             
             if not node_id:
-                logger.warning(f"Skipping account data with missing username: {account_data}")
                 continue
 
             node_details = nodes.get(node_id, {})
             if not node_details:
-                logger.warning(f"Skipping account with node_id '{node_id}' as details were not found in network_nodes.")
                 continue
 
-            # --- CRITICAL FIX: Correctly identify the connection type
-            # Check if the current node_id matches the original_id.
             if node_id.lower() == normalized_original_id:
                 connection = "Original"
             else:
                 connection = account_data.get('connection_type', 'Other')
 
-            # --- CRITICAL FIX: Retrieve scores and check for None before formatting.
             cr_value = cloutrank_scores.get(node_id)
             cr_value_str = f"{cr_value:.4f}" if cr_value is not None else "N/A"
             
@@ -240,7 +442,9 @@ class TableVisualizer:
                 "In-Degree": id_value_str,
                 "Followers": followers_str,
                 "Following": following_str,
-                "Description": TableVisualizer.format_text_with_line_breaks(node_details.get('description', '')),
+                "Description": TableVisualizer.format_text_with_line_breaks(
+                    node_details.get('description', '')[:200]
+                ),
             }
             
             if 'community_name' in account_data:
@@ -248,332 +452,48 @@ class TableVisualizer:
 
             if show_tweet_summaries:
                 tweet_summary = account_data.get("tweet_summary", "No tweet summary available")
-                row["Tweet Summary"] = TableVisualizer.format_text_with_line_breaks(tweet_summary)
+                row["Tweet Summary"] = TableVisualizer.format_text_with_line_breaks(
+                    tweet_summary[:300]
+                )
             
             rows_list.append(row)
         
-        df = pd.DataFrame(rows_list)
-        
-        if not df.empty:
-            with st.expander(f"Top {len(rows_list)} Accounts by {importance_metric}", expanded=False):
-                st.table(df)
+        if rows_list:
+            df = pd.DataFrame(rows_list)
+            with st.expander(f"Top {len(rows_list)} Accounts by {importance_metric}", expanded=True):
+                st.dataframe(df, use_container_width=True, height=400)
         else:
             st.info("No accounts to display.")
 
     @staticmethod
-    def display_community_tables(
-        network_nodes: Dict[str, Dict],
-        community_accounts: Dict[str, List[Dict[str, Any]]],
-        community_colors: Dict[str, str],
-        community_labels: Dict[str, str],
-        cloutrank_scores: Dict[str, float],
-        in_degrees: Dict[str, int],
-        show_tweet_summaries: bool = False
-    ) -> None:
-        """
-        Display tables of top accounts for each community.
-        
-        This method has been updated to safely handle potential None values in all
-        formatted numeric fields.
-        """
-        st.header("Community Analysis")
-        
-        TableVisualizer.apply_table_styles()
-        
-        if not community_accounts:
-            st.info("No communities found to display.")
-            return
-
-        sorted_communities = sorted(
-            community_accounts.items(),
-            key=lambda x: len(x[1]),
-            reverse=True
-        )
-        
-        for community_id, accounts in sorted_communities:
-            label = community_labels.get(community_id, f"Community {community_id}")
-            color = community_colors.get(community_id, "#6ca6cd")
-            
-            with st.expander(f"{label} ({len(accounts)} accounts)", expanded=False):
-                st.markdown(f"<div style='width:100%; height:3px; background-color:{color}'></div>", 
-                            unsafe_allow_html=True)
-                
-                rows_list = []
-                for account_data in accounts:
-                    node_id = account_data.get('username')
-                    
-                    if not node_id:
-                        logger.warning(f"Skipping community account data with missing username: {account_data}")
-                        continue
-                        
-                    node_details = network_nodes.get(node_id, {})
-                    if not node_details:
-                        logger.warning(f"Skipping community account with node_id '{node_id}' as details were not found.")
-                        continue
-                    
-                    # CRITICAL FIX: Retrieve scores and check for None before formatting.
-                    cr_value = cloutrank_scores.get(node_id)
-                    cr_value_str = f"{cr_value:.4f}" if cr_value is not None else "N/A"
-                    
-                    id_value = in_degrees.get(node_id)
-                    id_value_str = str(id_value) if id_value is not None else "N/A"
-
-                    # CRITICAL FIX: Add checks for all other formatted numeric values
-                    followers = node_details.get('followers_count')
-                    followers_str = f"{followers:,}" if followers is not None else "N/A"
-                    
-                    following = node_details.get('friends_count')
-                    following_str = f"{following:,}" if following is not None else "N/A"
-
-                    row = {
-                        "Username": f"@{node_details.get('screen_name', 'N/A')}",
-                        "CloutRank": cr_value_str,
-                        "In-Degree": id_value_str,
-                        "Followers": followers_str,
-                        "Following": following_str,
-                        "Description": TableVisualizer.format_text_with_line_breaks(node_details.get('description', '')),
-                    }
-                    if show_tweet_summaries:
-                        tweet_summary = account_data.get("tweet_summary", "No tweet summary available")
-                        row["Tweet Summary"] = TableVisualizer.format_text_with_line_breaks(tweet_summary)
-                    
-                    rows_list.append(row)
-                
-                if rows_list:
-                    df = pd.DataFrame(rows_list)
-                    st.table(df)
-                else:
-                    st.info("No accounts in this community to display.")
-
-    @staticmethod
-    def display_community_color_key(
-        community_labels: Dict[str, str],
-        community_colors: Dict[str, str],
-        node_communities: Dict[str, str]
-    ) -> None:
-        st.subheader("Community Color Key")
-        community_counts = {}
-        for username, comm_id in node_communities.items():
-            community_counts[comm_id] = community_counts.get(comm_id, 0) + 1
-        community_data = []
-        for comm_id, color in community_colors.items():
-            label = community_labels.get(comm_id, f"Community {comm_id}")
-            count = community_counts.get(comm_id, 0)
-            label_with_count = f"{label} ({count} accounts)"
-            community_data.append((label_with_count, color, comm_id))
-        community_data.sort(key=lambda x: x[0])
-        num_communities = len(community_data)
-        num_cols = min(4, max(2, 5 - (num_communities // 15)))
-        st.markdown("""
-        <style>
-        .community-grid { max-height: 400px; overflow-y: auto; padding-right: 10px; }
-        </style>
-        """, unsafe_allow_html=True)
-        with st.container():
-            st.markdown('<div class="community-grid">', unsafe_allow_html=True)
-            for i in range(0, num_communities, num_cols):
-                cols = st.columns(num_cols)
-                for j in range(num_cols):
-                    idx = i + j
-                    if idx < num_communities:
-                        label, color, _ = community_data[idx]
-                        with cols[j]:
-                            st.markdown(
-                                f'<div style="display:flex; align-items:center">'
-                                f'<div style="width:15px; height:15px; background-color:{color}; '
-                                f'border-radius:3px; margin-right:8px;"></div>'
-                                f'<span style="font-size:0.9em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{label}</span>'
-                                f'</div>',
-                                unsafe_allow_html=True
-                            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    @staticmethod
-    def find_promising_candidates(
-        network_nodes: Dict[str, Dict],
-        cloutrank_scores: Dict[str, float],
-        community_accounts: Dict[str, List[Dict[str, Any]]],
-        user_purpose: str,
-        top_n: int = 10
-    ) -> List[Dict[str, Any]]:
-        """
-        Analyzes network data to find and rank promising candidates based on a user's purpose.
-        
-        Args:
-            network_nodes: A dictionary of all account nodes.
-            cloutrank_scores: A dictionary of CloutRank scores for each node.
-            community_accounts: A dictionary mapping community IDs to accounts.
-            user_purpose: The user's purpose as a string (e.g., "looking for a co-founder for a sustainable tech company").
-            top_n: The number of top candidates to return.
-            
-        Returns:
-            A sorted list of dictionaries representing the most promising candidates.
-        """
-        logger.info(f"Finding candidates for purpose: '{user_purpose}'")
-        
-        # --- 1. Define Relevant Keywords and Communities ---
-        # Normalize purpose for keyword extraction
-        purpose_lower = user_purpose.lower()
-        
-        # Define keywords from the purpose, could be enhanced with NLP libraries
-        keywords = {
-            "cofounder": 3.0, "founder": 2.5, "entrepreneur": 2.0, "ceo": 1.5,
-            "electric vehicle": 2.5, "ev": 2.5, "battery": 2.0, "tech": 1.5,
-            "sustainability": 2.0, "clean energy": 1.5, "technology": 1.5,
-            "investor": 1.0, "business": 1.0, "venture": 1.0, "startup": 2.5,
-        }
-        
-        # Define communities that are likely to contain relevant candidates
-        # This is based on hypothetical community labels from your AI client
-        relevant_communities = {
-            "Sustainable Tech": 3.0,
-            "AI and Robotics": 2.0,
-            "Startup Founders": 3.0,
-            "Venture Capital": 1.5,
-            "Technology Innovators": 2.0,
-        }
-        
-        candidate_scores = {}
-
-        # --- 2. Score Each Account in the Network ---
-        for node_id, node_data in network_nodes.items():
-            score = 0.0
-            
-            # --- Score based on CloutRank (Influence) ---
-            cloutrank = cloutrank_scores.get(node_id, 0)
-            score += cloutrank * 10  # Weight CloutRank heavily
-
-            # --- Score based on Keyword Matches in Bio and Tweets ---
-            bio_text = node_data.get('description', '').lower()
-            tweet_summary = node_data.get('tweet_summary', '').lower()
-            
-            combined_text = bio_text + " " + tweet_summary
-            
-            for keyword, weight in keywords.items():
-                if keyword in combined_text:
-                    score += weight
-
-            # --- Score based on Community Affiliation ---
-            community_id = node_data.get('community')
-            if community_id:
-                community_name = TableVisualizer.get_community_name(community_id, community_accounts)
-                if community_name in relevant_communities:
-                    score += relevant_communities[community_name]
-            
-            if score > 0:
-                candidate_scores[node_id] = score
-
-        # --- 3. Rank and Format the Candidates ---
-        sorted_candidates = sorted(candidate_scores.items(), key=lambda item: item[1], reverse=True)
-        
-        final_candidates = []
-        for node_id, score in sorted_candidates[:top_n]:
-            node_data = network_nodes[node_id]
-            
-            # Find the community name
-            community_id = node_data.get('community')
-            community_name = TableVisualizer.get_community_name(community_id, community_accounts)
-            
-            final_candidates.append({
-                "Rank": len(final_candidates) + 1,
-                "Username": f"@{node_data.get('screen_name', 'N/A')}",
-                "Score": f"{score:.2f}",
-                "Community": community_name,
-                "Description": TableVisualizer.format_text_with_line_breaks(node_data.get('description', '')),
-            })
-            
-        logger.info(f"Found {len(final_candidates)} promising candidates.")
-        return final_candidates
-
-    @staticmethod
-    def get_community_name(community_id, community_accounts):
-        """Helper to find community name from community_accounts dict."""
-        for name, accounts_list in community_accounts.items():
-            for account in accounts_list:
-                if account.get('username') == community_id:
-                    return name
-        return "N/A"
-
-    @staticmethod
-    def display_topics_table(
-        network_nodes: Dict[str, Dict],
-        topic_to_accounts: Dict[str, List[str]],
-        account_to_topics: Dict[str, List[str]],
-        cloutrank_scores: Dict[str, float]
-    ) -> None:
-        """
-        Display a table of topics and the accounts that discuss them.
-        """
-        if not topic_to_accounts or not account_to_topics:
-            logger.warning("No topic data available for displaying topic table")
-            st.info("🔍 No topic data available. Use the 'Summarize Tweets & Generate Communities' button to generate topics.")
+    def display_network_summary(network_data, importance_scores: Dict[str, float]) -> None:
+        """Display a summary of the network statistics."""
+        if not network_data or not network_data.nodes:
             return
         
-        logger.info(f"Generating topic table with {len(topic_to_accounts)} topics across {len(account_to_topics)} accounts")
+        st.subheader("Network Summary")
         
-        try:
-            TableVisualizer.apply_table_styles()
-            st.header("Topics")
-            
-            with st.expander(f"🔍 Topics from Twitter Accounts ({len(topic_to_accounts)} topics found)", expanded=False):
-                st.write("Topics extracted from tweet content and account descriptions, showing connections between accounts and topics they discuss.")
-                
-                username_to_node_id = {node.get("screen_name", "").lower(): node_id for node_id, node in network_nodes.items() if node.get("screen_name")}
-                
-                topic_influence = {}
-                for topic, usernames in topic_to_accounts.items():
-                    topic_score = sum(cloutrank_scores.get(username_to_node_id.get(username.lower()), 0) for username in usernames)
-                    topic_influence[topic] = topic_score
-                
-                top_topics = sorted([(topic, score) for topic, score in topic_influence.items()], key=lambda x: x[1], reverse=True)[:20]
-                
-                logger.info(f"Selected top {len(top_topics)} topics by influence score")
-                
-                table_data = {
-                    "Topic": [],
-                    "Accounts": [],
-                    "Key Statements": []
-                }
-                
-                if not top_topics:
-                    st.warning("No topics with influence score were found. This may happen if account usernames don't match between tables.")
-                    return
-                    
-                for topic_name, _ in top_topics:
-                    usernames = topic_to_accounts.get(topic_name, [])
-                    accounts_text = ", ".join([f"@{u}" for u in usernames])
-                    table_data["Topic"].append(topic_name)
-                    table_data["Accounts"].append(accounts_text)
-                    
-                    key_statements = []
-                    for username in usernames[:3]:
-                        node_id = username_to_node_id.get(username.lower())
-                        if node_id and node_id in network_nodes:
-                            node = network_nodes[node_id]
-                            tweet_summary = node.get("tweet_summary", "")
-                            
-                            if tweet_summary:
-                                sentences = tweet_summary.split(". ")
-                                relevant_sentences = [s for s in sentences if topic_name.lower() in s.lower()]
-                                statement = ""
-                                if relevant_sentences:
-                                    statement = relevant_sentences[0]
-                                else:
-                                    statement = sentences[0] if sentences else ""
-                                
-                                if statement:
-                                    key_statements.append(f"@{username}: {statement}")
-
-                    statements_text = "\n\n".join(key_statements)
-                    formatted_statements = TableVisualizer.format_text_with_line_breaks(statements_text, max_line_length=100)
-                    table_data["Key Statements"].append(formatted_statements)
-                
-                df = pd.DataFrame(table_data)
-                
-                logger.info("Displaying topic table with data rows: " + str(len(df)))
-                st.table(df)
-                
-        except Exception as e:
-            error_msg = f"Error generating topic table: {str(e)}"
-            logger.error(error_msg)
-            st.error(error_msg)
+        total_nodes = len(network_data.nodes)
+        first_degree = len(network_data.get_first_degree_nodes())
+        second_degree = len(network_data.get_second_degree_nodes())
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Accounts", total_nodes)
+        
+        with col2:
+            st.metric("First Degree", first_degree)
+        
+        with col3:
+            st.metric("Second Degree", second_degree)
+        
+        with col4:
+            avg_importance = sum(importance_scores.values()) / len(importance_scores) if importance_scores else 0
+            st.metric("Avg Importance", f"{avg_importance:.3f}")
+        
+        nodes_with_tweets = sum(1 for node in network_data.nodes.values() 
+                               if node.get('tweets') and len(node['tweets']) > 0)
+        
+        if nodes_with_tweets > 0:
+            st.info(f"Tweet data available for {nodes_with_tweets} accounts")

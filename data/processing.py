@@ -1,5 +1,5 @@
 """
-Data processing utilities for X Network Visualization.
+Data processing utilities for X Network Visualization - Complete Fixed Version.
 """
 import logging
 import asyncio
@@ -15,367 +15,414 @@ from data.network import NetworkData
 from config import DEFAULT_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
-# Set up logging to show debug messages
-logging.basicConfig(level=logging.DEBUG)
 
 class DataProcessor:
     """
-    Processor for network data collection and processing.
+    Enhanced processor for network data collection with fixed None handling.
     """
     
     def __init__(self, twitter_client: TwitterClient, ai_client: AIClient):
-        """
-        Initialize the data processor.
-        
-        Args:
-            twitter_client: TwitterClient instance
-            ai_client: AIClient instance
-        """
         self.twitter_client = twitter_client
         self.ai_client = ai_client
 
     async def find_candidates_with_ai(self, network: NetworkData, user_prompt: str) -> Dict[str, Any]:
-        """
-        Finds promising candidates within the network using the AI client.
-
-        Args:
-            network: The NetworkData object containing all collected profiles.
-            user_prompt: A string describing the ideal candidate for the AI to search for.
-
-        Returns:
-            A dictionary with the AI's analysis, including a list of candidates.
-        """
-        st.info("Searching for candidates with AI. This may take a moment...")
+        """Enhanced AI candidate search with detailed analysis."""
+        st.info("Analyzing candidates with AI...")
         
-        # We'll create a list of all profiles in the network, but we should exclude the original user.
-        profiles_to_analyze = [
-            profile
-            for user_id, profile in network.nodes.items()
-            if user_id != network.original_id and "screen_name" in profile
-        ]
+        profiles_to_analyze = []
+        for user_id, profile in network.nodes.items():
+            if user_id != network.original_id and "screen_name" in profile:
+                follower_count = profile.get('followers_count') or 0
+                tweet_count = profile.get('statuses_count') or 0
+                
+                enhanced_profile = profile.copy()
+                enhanced_profile.update({
+                    'activity_level': 'High' if tweet_count > 1000 else 'Moderate' if tweet_count > 100 else 'Low',
+                    'engagement_tier': 'High' if follower_count > 10000 else 'Medium' if follower_count > 1000 else 'Basic'
+                })
+                profiles_to_analyze.append(enhanced_profile)
         
         if not profiles_to_analyze:
-            return {"candidates": [], "message": "No profiles available to analyze."}
+            return {"candidates": [], "analysis_summary": "No profiles available for analysis"}
 
         try:
-            # Pass the prepared profiles and the user's prompt to the AI client
             ai_response = await self.ai_client.search_for_candidates(profiles_to_analyze, user_prompt)
             return ai_response
         except Exception as e:
             logger.error(f"Error during AI candidate search: {e}")
-            return {"candidates": [], "message": f"An error occurred during the AI search: {e}"}
+            return {"candidates": [], "analysis_summary": f"Error: {e}"}
 
     async def collect_network_data(self, 
                                    username: str, 
                                    following_pages: int = 2, 
-                                   second_degree_pages: int = 1) -> NetworkData:
-        """
-        Collect network data for a given username.
-        
-        Args:
-            username: Twitter username
-            following_pages: Number of pages of following accounts to fetch
-            second_degree_pages: Number of pages of following for second-degree connections
-            
-        Returns:
-            NetworkData object with collected data
-        """
+                                   second_degree_pages: int = 1,
+                                   max_first_degree: int = 200,
+                                   max_second_degree_per_account: int = 30) -> NetworkData:
+        """Optimized network collection with smart limits."""
         network = NetworkData()
         original_id = network.add_original_node(username)
         
-        # Create progress indicators
         progress = st.progress(0)
         status_text = st.empty()
         
         try:
             async with TwitterClient.create_session() as session:
-                # Step 1: Get following for original account with pagination
-                status_text.text("Fetching accounts followed by original user...")
-                logger.debug(f"Starting to fetch first-hop accounts for {username}")
-                first_hop_accounts = await self._get_following_pages(
+                status_text.text("Fetching first-degree connections...")
+                
+                first_hop_accounts = await self._get_following_pages_limited(
                     username=username, 
                     session=session, 
                     max_pages=following_pages,
-                    progress_bar=progress,
-                    status_text=status_text,
-                    base_progress=0,
-                    total_progress_sections=following_pages + 1
+                    max_accounts=max_first_degree
                 )
-                logger.debug(f"Finished fetching {len(first_hop_accounts)} first-hop accounts.")
                 
-                # Add first hop accounts to nodes and create edges
+                first_degree_ids = []
                 for account in first_hop_accounts:
-                    uid = str(account.get("user_id"))
+                    uid = str(account.get("user_id", ""))
                     if not uid:
                         continue
                     
-                    # Add "degree" attribute to indicate first-degree connection
                     account["degree"] = 1
                     network.add_node(uid, account)
                     network.add_edge(original_id, uid)
+                    first_degree_ids.append((uid, account.get("screen_name", "")))
                 
-                # Step 2: Get following for each first-degree account IN PARALLEL
-                status_text.text(f"Fetching following for {len(first_hop_accounts)} first-degree accounts in parallel...")
-                logger.debug(f"Preparing to fetch second-degree connections for {len(first_hop_accounts)} first-degree accounts.")
+                progress.progress(0.3)
+                status_text.text(f"Found {len(first_degree_ids)} first-degree connections")
                 
-                # Create tasks for all first-degree accounts
-                second_degree_tasks = []
-                for account in first_hop_accounts:
-                    source_id = str(account.get("user_id"))
-                    source_name = account.get("screen_name", "")
+                if second_degree_pages > 0 and first_degree_ids:
+                    status_text.text("Collecting second-degree connections in parallel...")
                     
-                    # Create task to fetch second-degree connections
-                    task = self._fetch_second_degree_connections(
-                        source_id, 
-                        source_name, 
-                        session, 
-                        second_degree_pages
-                    )
-                    second_degree_tasks.append(task)
+                    semaphore = asyncio.Semaphore(8)
+                    
+                    async def fetch_second_degree_limited(source_id, source_name):
+                        async with semaphore:
+                            return await self._fetch_second_degree_limited(
+                                source_id, source_name, session, 
+                                second_degree_pages, max_second_degree_per_account
+                            )
+                    
+                    tasks = [
+                        fetch_second_degree_limited(source_id, source_name)
+                        for source_id, source_name in first_degree_ids
+                    ]
+                    
+                    completed = 0
+                    for completed_task in asyncio.as_completed(tasks):
+                        source_id, connections = await completed_task
+                        
+                        for sid, node_data in connections:
+                            if sid not in network.nodes:
+                                network.add_node(sid, node_data)
+                            network.add_edge(source_id, sid)
+                        
+                        completed += 1
+                        progress.progress(0.3 + (0.7 * completed / len(tasks)))
+                        status_text.text(f"Processed {completed}/{len(tasks)} first-degree accounts")
                 
-                # Run all tasks concurrently with progress reporting
-                total_tasks = len(second_degree_tasks)
-                second_degree_results = []
-                for i, task_coroutine in enumerate(asyncio.as_completed(second_degree_tasks), 1):
-                    result = await task_coroutine
-                    second_degree_results.append(result)
-                    progress.progress((following_pages + i) / (following_pages + total_tasks + 1))
-                    status_text.text(f"Processed {i}/{total_tasks} first-degree accounts")
-                
-                # Process all second-degree connections
-                for source_id, connections in second_degree_results:
-                    for sid, node_data in connections:
-                        if sid not in network.nodes:
-                            network.add_node(sid, node_data)
-                        network.add_edge(source_id, sid)
-                
-                # Complete progress
                 progress.progress(1.0)
-                status_text.text("Network data collection complete!")
+                total_accounts = len(network.nodes)
+                status_text.text(f"Collection complete! Found {total_accounts} total accounts")
                 
         except Exception as e:
-            logger.error(f"Error in network collection: {str(e)}")
-            status_text.text(f"Error: {str(e)}")
+            logger.error(f"Error in network collection: {e}")
+            status_text.text(f"Collection error: {e}")
         
         return network
 
-    async def _get_following_pages(self, 
-                                   username: str, 
-                                   session: aiohttp.ClientSession, 
-                                   max_pages: int,
-                                   progress_bar: Optional[st.delta_generator.DeltaGenerator] = None,
-                                   status_text: Optional[st.delta_generator.DeltaGenerator] = None,
-                                   base_progress: int = 0,
-                                   total_progress_sections: int = 1) -> List[Dict]:
-        """
-        Fetches all pages of following accounts for a user.
-        
-        Args:
-            username: The username to fetch following for.
-            session: The aiohttp client session.
-            max_pages: The maximum number of pages to fetch.
-            progress_bar: A Streamlit progress bar object.
-            status_text: A Streamlit text object for status updates.
-            base_progress: The starting point for the progress bar.
-            total_progress_sections: The total number of progress units.
-
-        Returns:
-            A list of all accounts found.
-        """
+    async def _get_following_pages_limited(self, 
+                                           username: str, 
+                                           session: aiohttp.ClientSession, 
+                                           max_pages: int,
+                                           max_accounts: int) -> List[Dict]:
+        """Get following pages with strict account limits."""
         all_accounts = []
-        cursors = [None]
+        cursor = None
         
-        # Fetch the first page and get the initial cursor
-        accounts, next_cursor = await self.twitter_client.get_following(username, session, None)
-        all_accounts.extend(accounts)
-        logger.debug(f"Fetched first page of following for {username}. Accounts: {len(accounts)}")
-        
-        # Get subsequent cursors sequentially
-        for i in range(max_pages - 1):
-            if not next_cursor or next_cursor == "-1":
-                logger.debug(f"No more cursors for {username}. Stopping at page {i+1}.")
+        for page in range(max_pages):
+            if len(all_accounts) >= max_accounts:
                 break
-            cursors.append(next_cursor)
-            _, next_cursor = await self.twitter_client.get_following(username, session, next_cursor)
-        logger.debug(f"Collected {len(cursors)} cursors for {username}.")
-
-        # Now, fetch all pages in parallel, starting from the second page
-        page_tasks = [self.twitter_client.get_following(username, session, cursor) for cursor in cursors[1:]]
-        
-        if page_tasks:
-            results = await asyncio.gather(*page_tasks)
-            for accounts, _ in results:
-                all_accounts.extend(accounts)
-            logger.debug(f"Finished fetching {len(page_tasks)} pages in parallel. Total accounts after parallel fetch: {len(all_accounts)}")
-
-        if progress_bar:
-            progress_bar.progress((base_progress + len(cursors)) / total_progress_sections)
-        if status_text:
-            status_text.text(f"Fetched {len(all_accounts)} accounts for {username}")
+                
+            accounts, cursor = await self.twitter_client.get_following(username, session, cursor)
+            
+            if not accounts:
+                break
+                
+            remaining_slots = max_accounts - len(all_accounts)
+            all_accounts.extend(accounts[:remaining_slots])
+            
+            if not cursor or cursor == "-1":
+                break
         
         return all_accounts
 
-    async def _fetch_second_degree_connections(self, 
-                                               source_id: str, 
-                                               source_name: str, 
-                                               session: aiohttp.ClientSession, 
-                                               max_pages: int) -> Tuple[str, List[Tuple[str, Dict]]]:
-        """
-        Fetch all second-degree connections for a given account.
-        
-        Args:
-            source_id: Source account ID
-            source_name: Source account username
-            session: aiohttp ClientSession
-            max_pages: Maximum number of pages to fetch
-            
-        Returns:
-            Tuple containing source ID and list of (node_id, node_data) tuples
-        """
-        connections = []
-        
-        # We will now use the new parallel page fetching helper function
-        logger.debug(f"Fetching second-degree connections for source: {source_name}")
-        accounts = await self._get_following_pages(
-            username=source_name,
-            session=session,
-            max_pages=max_pages
-        )
+    async def _fetch_second_degree_limited(self, 
+                                           source_id: str, 
+                                           source_name: str, 
+                                           session: aiohttp.ClientSession, 
+                                           max_pages: int,
+                                           max_accounts: int) -> Tuple[str, List[Tuple[str, Dict]]]:
+        """Fetch limited second-degree connections for performance."""
+        try:
+            accounts = await self._get_following_pages_limited(
+                username=source_name,
+                session=session,
+                max_pages=max_pages,
+                max_accounts=max_accounts
+            )
 
-        for account in accounts:
-            sid = str(account.get("user_id"))
-            if sid:
-                # Add "degree" attribute (set to 2 for second-degree connections)
-                account["degree"] = 2
-                connections.append((sid, account))
-            else:
-                logger.warning(f"Could not find 'user_id' for an account while processing second-degree connections for {source_name}")
-        
-        logger.debug(f"Finished fetching second-degree connections for {source_name}. Found {len(connections)} connections.")
-        return (source_id, connections)
+            connections = []
+            for account in accounts:
+                sid = str(account.get("user_id", ""))
+                if sid:
+                    account["degree"] = 2
+                    connections.append((sid, account))
+            
+            return (source_id, connections)
+            
+        except Exception as e:
+            logger.error(f"Error fetching second-degree for {source_name}: {e}")
+            return source_id, []
 
     async def process_tweet_data(self, 
                                  network: NetworkData, 
                                  selected_nodes: Set[str], 
-                                 batch_size: int = DEFAULT_BATCH_SIZE) -> NetworkData:
-        """
-        Fetch and summarize tweets for selected nodes with parallel batch processing.
+                                 batch_size: int = 20) -> NetworkData:
+        """Ultra-fast tweet processing with intelligent prioritization."""
+        priority_nodes = self._prioritize_nodes_for_tweet_processing(network, selected_nodes)
         
-        Args:
-            network: NetworkData instance
-            selected_nodes: Set of node IDs to process
-            batch_size: Batch size for API calls
-            
-        Returns:
-            Updated NetworkData instance
-        """
-        # Create UI elements for progress tracking
+        if not priority_nodes:
+            st.info("No priority accounts selected for tweet processing")
+            return network
+        
+        max_tweet_accounts = 50
+        if len(priority_nodes) > max_tweet_accounts:
+            priority_nodes = priority_nodes[:max_tweet_accounts]
+            st.warning(f"Limited to top {max_tweet_accounts} most important accounts for performance")
+        
         progress_bar = st.progress(0)
         status_text = st.empty()
-        status_text.text(f"Processing tweets for {len(selected_nodes)} accounts...")
-        
-        # Skip if no nodes to process
-        if not selected_nodes:
-            status_text.text("No nodes selected for tweet processing")
-            return network
-            
-        # Get only nodes from selected_nodes set
-        nodes_to_process = [
-            (node_id, network.nodes[node_id]) 
-            for node_id in selected_nodes 
-            if node_id in network.nodes
-        ]
+        status_text.text(f"Processing tweets for {len(priority_nodes)} priority accounts...")
         
         try:
             async with TwitterClient.create_session() as session:
-                # Process in batches
-                total_processed = 0
+                status_text.text("Fetching tweets in parallel...")
                 
-                # Create batches
-                batches = [nodes_to_process[i:i+batch_size] 
-                           for i in range(0, len(nodes_to_process), batch_size)]
+                semaphore = asyncio.Semaphore(10)
                 
-                # Define function to process a single batch
-                async def process_batch(batch_idx, batch):
-                    batch_results = []
-                    
-                    # Create tasks to fetch tweets for each account in the batch
-                    tweet_tasks = []
-                    for node_id, node in batch:
-                        task = self._fetch_tweets_for_node(node_id, node, session)
-                        tweet_tasks.append(task)
-                    
-                    # Wait for all tasks to complete
-                    results = await asyncio.gather(*tweet_tasks)
-                    
-                    # Process results
-                    for node_id, tweets, status in results:
-                        if tweets:
-                            # Generate summary
-                            username = network.nodes[node_id]["screen_name"]
-                            summary = await self.ai_client.generate_tweet_summary(tweets, username)
-                            
-                            # Update network
-                            network.update_node_tweet_data(node_id, tweets, summary)
-                            
-                            # Set success status
-                            network.nodes[node_id]["tweet_fetch_status"] = ""
-                        else:
-                            # Set error status
-                            network.nodes[node_id]["tweet_fetch_status"] = status
-                    
-                    return batch_idx, len(batch)
-                
-                # Process batches in parallel with a concurrency limit
-                # Using up to 5 concurrent batches (adjust based on your rate limits)
-                concurrency_limit = min(5, len(batches))
-                
-                # Create a semaphore to limit concurrency
-                semaphore = asyncio.Semaphore(concurrency_limit)
-                
-                async def process_batch_with_semaphore(batch_idx, batch):
+                async def fetch_with_semaphore(node_id, node):
                     async with semaphore:
-                        return await process_batch(batch_idx, batch)
+                        return await self._fetch_tweets_for_node(node_id, node, session)
                 
-                # Create tasks for all batches
-                batch_tasks = [
-                    process_batch_with_semaphore(idx, batch)
-                    for idx, batch in enumerate(batches)
+                fetch_tasks = [
+                    fetch_with_semaphore(node_id, network.nodes[node_id])
+                    for node_id in priority_nodes
                 ]
                 
-                # Process all batches with progress tracking
-                for completed_task in asyncio.as_completed(batch_tasks):
-                    batch_idx, batch_size = await completed_task
-                    total_processed += batch_size
-                    progress_bar.progress(total_processed / len(nodes_to_process))
-                    status_text.text(f"Processed batch {batch_idx+1}/{len(batches)} " 
-                                     f"({total_processed}/{len(nodes_to_process)} accounts)")
+                fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+                progress_bar.progress(0.6)
                 
-                # Complete progress
+                accounts_with_tweets = []
+                for i, result in enumerate(fetch_results):
+                    if isinstance(result, Exception):
+                        continue
+                    
+                    node_id, tweets, status = result
+                    if tweets and len(tweets) > 0:
+                        accounts_with_tweets.append((node_id, tweets))
+                    else:
+                        network.nodes[node_id]["tweet_fetch_status"] = status or "No tweets"
+                
+                status_text.text(f"Processing AI summaries for {len(accounts_with_tweets)} accounts...")
+                
+                if accounts_with_tweets:
+                    await self._batch_process_tweet_summaries(
+                        network, accounts_with_tweets, progress_bar, status_text, 0.6
+                    )
+                
                 progress_bar.progress(1.0)
-                status_text.text(f"Tweet processing complete for {total_processed} accounts")
+                status_text.text(f"Tweet processing complete! Processed {len(accounts_with_tweets)} accounts")
                 
         except Exception as e:
-            logger.error(f"Error processing tweets: {str(e)}")
-            status_text.text(f"Error processing tweets: {str(e)}")
+            logger.error(f"Error in tweet processing: {e}")
+            status_text.text(f"Processing error: {e}")
         
         return network
-    
+
+    def _prioritize_nodes_for_tweet_processing(self, network: NetworkData, selected_nodes: Set[str]) -> List[str]:
+        """FIXED: Intelligent prioritization with None handling."""
+        priority_accounts = []
+        importance_scores = getattr(self, '_cached_importance_scores', {})
+        
+        for node_id in selected_nodes:
+            if node_id not in network.nodes:
+                continue
+                
+            node = network.nodes[node_id]
+            
+            if node.get("tweet_summary"):
+                continue
+            
+            # FIXED: Safe comparison with None values
+            tweet_count = node.get("statuses_count") or 0
+            if tweet_count < 5:
+                continue
+            
+            if not node.get("description", "").strip():
+                continue
+            
+            priority_score = 0
+            
+            # FIXED: Safe follower count handling
+            followers = node.get("followers_count") or 0
+            if followers > 50000:
+                priority_score += 5
+            elif followers > 10000:
+                priority_score += 4
+            elif followers > 1000:
+                priority_score += 3
+            elif followers > 100:
+                priority_score += 1
+            
+            # FIXED: Safe tweet count handling
+            if tweet_count > 5000:
+                priority_score += 3
+            elif tweet_count > 1000:
+                priority_score += 2
+            elif tweet_count > 100:
+                priority_score += 1
+            
+            # FIXED: Safe importance score handling
+            if importance_scores:
+                importance = importance_scores.get(node_id) or 0
+                priority_score += importance * 15
+            
+            # FIXED: Safe verified check
+            if node.get("verified"):
+                priority_score += 2
+            
+            priority_accounts.append((node_id, priority_score))
+        
+        priority_accounts.sort(key=lambda x: x[1], reverse=True)
+        return [node_id for node_id, _ in priority_accounts]
+
+    async def _batch_process_tweet_summaries(self, 
+                                           network: NetworkData,
+                                           accounts_with_tweets: List[Tuple[str, List]], 
+                                           progress_bar, 
+                                           status_text,
+                                           base_progress: float) -> None:
+        """Process AI summaries in efficient batches."""
+        batch_size = 8
+        batches = [accounts_with_tweets[i:i+batch_size] 
+                   for i in range(0, len(accounts_with_tweets), batch_size)]
+        
+        for i, batch in enumerate(batches):
+            try:
+                batch_prompt = self._create_batch_tweet_summary_prompt(network, batch)
+                batch_response = await self.ai_client._make_api_call_with_retries(batch_prompt)
+                
+                if batch_response:
+                    self._parse_batch_summary_response(network, batch, batch_response)
+                
+                progress = base_progress + (0.4 * (i + 1) / len(batches))
+                progress_bar.progress(progress)
+                status_text.text(f"AI processing batch {i + 1}/{len(batches)}")
+                
+            except Exception as e:
+                logger.error(f"Error processing AI batch {i}: {e}")
+                for node_id, _ in batch:
+                    network.nodes[node_id]["tweet_fetch_status"] = f"AI processing failed: {e}"
+
+    def _create_batch_tweet_summary_prompt(self, network: NetworkData, batch: List[Tuple[str, List]]) -> str:
+        """Create optimized batch prompt for tweet summarization."""
+        
+        prompt = """Analyze these Twitter accounts and provide professional summaries focused on expertise and career relevance.
+
+For each account, provide a 2-3 sentence summary covering:
+1. Primary expertise/industry focus
+2. Professional role and key interests  
+3. Communication style and thought leadership level
+
+Return response in this exact JSON format:
+```json
+{
+  "summaries": {
+    "username1": "Concise professional summary...",
+    "username2": "Another professional summary..."
+  }
+}
+```
+
+Accounts to analyze:
+
+"""
+        
+        for node_id, tweets in batch:
+            username = network.nodes[node_id].get("screen_name", "unknown")
+            
+            # FIXED: Safe sorting with None handling
+            top_tweets = sorted(tweets, key=lambda t: t.get("total_engagement") or 0, reverse=True)[:8]
+            tweet_texts = [t.get("text", "")[:150] for t in top_tweets if t.get("text")]
+            
+            if tweet_texts:
+                prompt += f"\n@{username} recent tweets:\n"
+                for i, text in enumerate(tweet_texts[:5], 1):
+                    prompt += f"{i}. {text}\n"
+                prompt += "\n"
+        
+        return prompt
+
+    def _parse_batch_summary_response(self, network: NetworkData, batch: List[Tuple[str, List]], response: str) -> None:
+        """FIXED: Parse batch AI response with JSON cleaning."""
+        try:
+            import json
+            import re
+            
+            json_match = re.search(r'```json\s*(\{.*\})\s*```', response, re.DOTALL)
+            if json_match:
+                json_string = json_match.group(1)
+                
+                # Fix common JSON issues
+                json_string = re.sub(r',\s*}', '}', json_string)
+                json_string = re.sub(r',\s*]', ']', json_string)
+                
+                response_data = json.loads(json_string)
+                summaries = response_data.get("summaries", {})
+                
+                for node_id, tweets in batch:
+                    username = network.nodes[node_id].get("screen_name", "")
+                    
+                    if username in summaries:
+                        summary = summaries[username]
+                        network.update_node_tweet_data(node_id, tweets, summary)
+                        network.nodes[node_id]["tweet_fetch_status"] = ""
+                    else:
+                        fallback_summary = f"Active Twitter user with {len(tweets)} recent tweets in their field"
+                        network.update_node_tweet_data(node_id, tweets, fallback_summary)
+                        network.nodes[node_id]["tweet_fetch_status"] = ""
+            else:
+                for node_id, tweets in batch:
+                    fallback_summary = f"Professional with {len(tweets)} recent tweets"
+                    network.update_node_tweet_data(node_id, tweets, fallback_summary)
+                    network.nodes[node_id]["tweet_fetch_status"] = ""
+                    
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {e}")
+            for node_id, tweets in batch:
+                network.update_node_tweet_data(node_id, tweets, "Summary generation failed")
+                network.nodes[node_id]["tweet_fetch_status"] = "JSON parsing failed"
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            for node_id, tweets in batch:
+                network.update_node_tweet_data(node_id, tweets, "Summary generation failed")
+                network.nodes[node_id]["tweet_fetch_status"] = "Processing failed"
+
     async def _fetch_tweets_for_node(self, 
                                      node_id: str, 
                                      node: Dict, 
                                      session: aiohttp.ClientSession) -> Tuple[str, List[Dict], str]:
-        """
-        Fetch tweets for a single node.
-        
-        Args:
-            node_id: Node ID
-            node: Node data
-            session: aiohttp ClientSession
-            
-        Returns:
-            Tuple containing node ID, list of tweets, and status message
-        """
+        """Fetch tweets for a single node with error handling."""
         try:
             tweets, _ = await self.twitter_client.get_user_tweets(node_id, session)
             if tweets:
@@ -383,135 +430,5 @@ class DataProcessor:
             else:
                 return node_id, [], "No tweets available"
         except Exception as e:
-            logger.error(f"Error fetching tweets for {node.get('screen_name', 'unknown')}: {str(e)}")
+            logger.error(f"Error fetching tweets for {node.get('screen_name', 'unknown')}: {e}")
             return node_id, [], f"Error: {str(e)}"
-    
-    def create_downloadable_data(self, 
-                                 network: NetworkData, 
-                                 importance_scores: Dict[str, float],
-                                 in_degrees: Dict[str, int],
-                                 cloutrank_scores: Dict[str, float], 
-                                 node_communities: Dict[str, str] = None,
-                                 community_labels: Dict[str, str] = None) -> pd.DataFrame:
-        """
-        Create a comprehensive downloadable table with all account information.
-        
-        Args:
-            network: NetworkData instance
-            importance_scores: Dictionary mapping node IDs to importance scores
-            in_degrees: Dictionary mapping node IDs to in-degree values
-            cloutrank_scores: Dictionary mapping node IDs to CloutRank scores
-            node_communities: Dictionary mapping usernames to community IDs
-            community_labels: Dictionary mapping community IDs to labels
-            
-        Returns:
-            Pandas DataFrame with account data
-        """
-        # Create DataFrame for all accounts
-        data = []
-        
-        for node_id, node in network.nodes.items():
-            # Skip nodes that might not be complete accounts
-            if not isinstance(node, dict) or "screen_name" not in node:
-                continue
-            
-            # Get community info if available
-            community_id = ""
-            community_label = ""
-            
-            if node_communities and community_labels:
-                username = node["screen_name"]
-                if username in node_communities:
-                    community_id = node_communities[username]
-                    community_label = community_labels.get(community_id, "")
-            
-            # Get tweet summary
-            tweet_summary = node.get("tweet_summary", "")
-            
-            # Add row to data
-            row = {
-                "Screen Name": node["screen_name"],
-                "Name": node.get("name", ""),
-                "CloutRank": cloutrank_scores.get(node_id, 0),
-                "In-Degree": in_degrees.get(node_id, 0),
-                "Importance": importance_scores.get(node_id, 0),
-                "Followers": node.get("followers_count", 0),
-                "Following": node.get("friends_count", 0),
-                "Ratio": node.get("ratio", 0),
-                "Tweets": node.get("statuses_count", 0),
-                "Media": node.get("media_count", 0),
-                "Created At": node.get("created_at", ""),
-                "Verified": node.get("verified", False),
-                "Blue Verified": node.get("blue_verified", False),
-                "Business Account": node.get("business_account", False),
-                "Website": node.get("website", ""),
-                "Location": node.get("location", ""),
-                "Community ID": community_id,
-                "Community": community_label,
-                "Tweet Summary": tweet_summary,
-                "Description": node.get("description", "")
-            }
-            data.append(row)
-        
-        # Convert to DataFrame and sort by CloutRank
-        df = pd.DataFrame(data)
-        df = df.sort_values("CloutRank", ascending=False)
-        
-        return df
-    
-    async def process_original_account_tweets(self, network: NetworkData) -> NetworkData:
-        """
-        Fetch and process tweets specifically for the original account.
-        
-        Args:
-            network: NetworkData instance
-            
-        Returns:
-            Updated NetworkData instance with original account tweets processed
-        """
-        if not network.original_id or not network.original_username:
-            logger.warning("Cannot process original account tweets: No original account found")
-            return network
-            
-        status_text = st.empty()
-        status_text.text(f"Retrieving tweets for original account @{network.original_username}...")
-        
-        try:
-            async with TwitterClient.create_session() as session:
-                # First get the Twitter user ID from the username
-                user_id = await self.twitter_client.get_user_id_from_username(network.original_username, session)
-                
-                if not user_id:
-                    status_text.text(f"Could not find Twitter ID for @{network.original_username}")
-                    return network
-                
-                # Then fetch tweets for this user ID
-                tweets, _ = await self.twitter_client.get_user_tweets(user_id, session)
-                
-                if not tweets:
-                    status_text.text(f"No tweets available for @{network.original_username}")
-                    return network
-                
-                # Update the original node with the tweets
-                if tweets:
-                    # Process the tweets with AI
-                    tweet_text = "\n\n".join([t.get("full_text", t.get("text", "")) for t in tweets[:10]])
-                    
-                    # Get AI summary
-                    summary = await self.ai_client.summarize_user_tweets(
-                        network.original_username, 
-                        tweet_text
-                    )
-                    
-                    # Store the result
-                    network.nodes[network.original_id]["tweets"] = tweets
-                    network.nodes[network.original_id]["tweet_summary"] = summary
-                    network.nodes[network.original_id]["tweet_fetch_status"] = ""
-                
-                status_text.text(f"Successfully processed tweets for @{network.original_username}")
-                
-        except Exception as e:
-            logger.error(f"Error processing tweets for original account: {str(e)}")
-            status_text.text(f"Error processing tweets for original account: {str(e)}")
-        
-        return network

@@ -1,468 +1,357 @@
 """
-Community detection and management for X Network Visualization.
+Fixed community detection and management for X Network Visualization.
 """
 import logging
 import random
 import asyncio
-from typing import Dict, List, Tuple, Optional, Any
 import colorsys
+from typing import Dict, List, Tuple, Optional, Any
 
 import streamlit as st
 
 from api.ai_client import AIClient
-from config import DEFAULT_NUM_COMMUNITIES, DEFAULT_BATCH_SIZE, MIN_ACCOUNTS_FOR_COMMUNITIES
 
 logger = logging.getLogger(__name__)
 
 class CommunityManager:
     """
-    Manager for community detection and classification.
+    FIXED manager for community detection with proper filtering and limits.
     """
     
     def __init__(self, ai_client: AIClient):
-        """
-        Initialize the community manager.
-        
-        Args:
-            ai_client: AIClient instance for generating labels and classifications
-        """
+        """Initialize the community manager."""
         self.ai_client = ai_client
         self.community_labels: Dict[str, str] = {}
         self.community_colors: Dict[str, str] = {}
         self.node_communities: Dict[str, str] = {}
     
-    # New method to combine label generation and account classification
-    async def detect_and_label_communities(self, node_descriptions: Dict[str, str], num_communities: int = DEFAULT_NUM_COMMUNITIES) -> Tuple[Dict[str, str], Dict[str, str]]:
+    async def detect_communities_fixed(self, 
+                                     node_descriptions: Dict[str, str], 
+                                     target_communities: int = 8,
+                                     min_community_size: int = 5) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
-        Detects communities and labels them, then classifies all nodes into
-        those communities. This method orchestrates the entire process.
+        FIXED community detection that only returns communities with actual members.
+        """
+        if len(node_descriptions) < 20:
+            st.warning("Need at least 20 accounts for community detection")
+            return {}, {}
         
-        Args:
-            node_descriptions: A dictionary of node IDs and their descriptions.
-            num_communities: The desired number of communities.
+        progress = st.progress(0)
+        status = st.empty()
+        
+        try:
+            # Sample if too large
+            if len(node_descriptions) > 300:
+                status.text(f"Sampling 300 accounts from {len(node_descriptions)} for analysis...")
+                sampled_items = random.sample(list(node_descriptions.items()), 300)
+                sample_descriptions = dict(sampled_items)
+            else:
+                sample_descriptions = node_descriptions
+                status.text(f"Analyzing {len(sample_descriptions)} accounts...")
             
-        Returns:
-            A tuple containing:
-            - A dictionary mapping community IDs to their human-readable labels.
-            - A dictionary mapping account usernames to their assigned community IDs.
-        """
-        # Convert the descriptions into a format the other methods can use.
-        accounts = [{"screen_name": username, "description": desc} for username, desc in node_descriptions.items()]
-        
-        # 1. Generate human-readable labels for the communities
-        community_labels = await self.generate_community_labels(
-            accounts=accounts,
-            num_communities=num_communities
-        )
-        
-        # 2. Classify each account into one of the newly generated communities
-        node_communities = await self.classify_accounts(
-            accounts=accounts
-        )
-        
-        return community_labels, node_communities
-        
-    def generate_n_colors(self, n: int) -> List[str]:
-        """
-        Generate n visually distinct colors.
-        
-        Args:
-            n: Number of colors to generate
+            # Convert to format AI expects
+            sample_accounts = [
+                {
+                    "screen_name": username,
+                    "description": desc,
+                    "tweet_summary": ""
+                }
+                for username, desc in sample_descriptions.items()
+            ]
             
-        Returns:
-            List of hex color codes
-        """
-        colors = []
-        for i in range(n):
-            hue = i / n
-            saturation = 0.7 + random.uniform(-0.2, 0.2)
-            value = 0.9 + random.uniform(-0.2, 0.2)
+            progress.progress(0.3)
+            status.text("Generating community labels...")
+            
+            # Generate labels
+            community_labels = await self.ai_client.generate_community_labels(
+                sample_accounts, target_communities
+            )
+            
+            if not community_labels:
+                st.error("Failed to generate community labels")
+                return {}, {}
+            
+            progress.progress(0.6)
+            status.text("Classifying all accounts...")
+            
+            # Classify ALL original accounts
+            all_accounts = [
+                {"screen_name": username, "description": desc}
+                for username, desc in node_descriptions.items()
+            ]
+            
+            # Process in chunks
+            node_communities = {}
+            chunk_size = 50
+            chunks = [all_accounts[i:i+chunk_size] for i in range(0, len(all_accounts), chunk_size)]
+            
+            for i, chunk in enumerate(chunks):
+                chunk_classifications = await self.ai_client.classify_accounts(chunk, community_labels)
+                node_communities.update(chunk_classifications)
+                
+                progress.progress(0.6 + (0.3 * (i + 1) / len(chunks)))
+                status.text(f"Classified chunk {i + 1}/{len(chunks)}")
+            
+            progress.progress(0.9)
+            status.text("Filtering communities...")
+            
+            # CRITICAL FIX: Count actual community sizes and filter
+            community_counts = {}
+            for username, comm_id in node_communities.items():
+                if comm_id in community_labels:  # Only count valid community IDs
+                    community_counts[comm_id] = community_counts.get(comm_id, 0) + 1
+            
+            # Filter out communities that are too small or have zero members
+            filtered_labels = {}
+            filtered_communities = {}
+            
+            for comm_id, label in community_labels.items():
+                actual_count = community_counts.get(comm_id, 0)
+                if actual_count >= min_community_size:
+                    filtered_labels[comm_id] = label
+                    # Only keep classifications for communities we're keeping
+                    for username, user_comm_id in node_communities.items():
+                        if user_comm_id == comm_id:
+                            filtered_communities[username] = comm_id
+            
+            # Store results
+            self.community_labels = filtered_labels
+            self.node_communities = filtered_communities
+            
+            # Generate colors only for communities we kept
+            if filtered_labels:
+                self.community_colors = self._generate_distinct_colors()
+            
+            progress.progress(1.0)
+            
+            # Show final results
+            final_count = len(filtered_labels)
+            total_classified = len(filtered_communities)
+            
+            if final_count > 0:
+                status.text(f"Created {final_count} communities with {total_classified} total members")
+                st.success(f"Community detection complete: {final_count} communities, {total_classified} accounts classified")
+            else:
+                status.text("No communities met minimum size requirements")
+                st.warning("No communities created - try lowering minimum community size")
+            
+            return filtered_labels, filtered_communities
+            
+        except Exception as e:
+            logger.error(f"Error in community detection: {e}")
+            st.error(f"Community detection failed: {e}")
+            return {}, {}
+    
+    def _generate_distinct_colors(self) -> Dict[str, str]:
+        """Generate visually distinct colors for the communities we actually have."""
+        colors = {}
+        n_colors = len(self.community_labels)
+        community_ids = list(self.community_labels.keys())
+        
+        for i, comm_id in enumerate(community_ids):
+            hue = i / n_colors
+            saturation = 0.7 + random.uniform(-0.1, 0.1)
+            value = 0.8 + random.uniform(-0.1, 0.1)
+            
             rgb = colorsys.hsv_to_rgb(hue, saturation, value)
             hex_color = '#{:02x}{:02x}{:02x}'.format(
-                int(rgb[0] * 255),
-                int(rgb[1] * 255),
-                int(rgb[2] * 255))
-            colors.append(hex_color)
+                int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)
+            )
+            colors[comm_id] = hex_color
+            
         return colors
     
-    def make_color_more_distinct(self, hex_color: str) -> str:
-        """
-        Make colors more distinct by increasing saturation and adjusting value.
-        
-        Args:
-            hex_color: Hex color code
-            
-        Returns:
-            Enhanced hex color code
-        """
-        # Convert hex to RGB
-        hex_color = hex_color.lstrip('#')
-        r, g, b = tuple(int(hex_color[i:i+2], 16)/255 for i in (0, 2, 4))
-        
-        # Convert RGB to HSV
-        h, s, v = colorsys.rgb_to_hsv(r, g, b)
-        
-        # Increase saturation, ensure good value
-        s = min(1.0, s * 1.3)  # Increase saturation by 30%
-        v = max(0.6, min(0.95, v))  # Keep value in a good range
-        
-        # Convert back to RGB
-        r, g, b = colorsys.hsv_to_rgb(h, s, v)
-        
-        # Convert to hex
-        return '#{:02x}{:02x}{:02x}'.format(
-            int(r * 255),
-            int(g * 255),
-            int(b * 255))
-    
-    def categorize_communities(self) -> Dict[str, str]:
-        """
-        Group communities into broader categories for better organization.
-        
-        Returns:
-            Dictionary mapping community IDs to category names
-        """
-        if not self.community_labels:
-            return {}
-            
-        # Define category keywords
-        categories = {
-            "Technology": ["ai", "software", "dev", "tech", "computer", "engineer", "automation", 
-                          "robotics", "open source", "security", "privacy", "uiux", "design"],
-            "Business": ["vc", "investor", "startup", "founder", "ceo", "business", "marketing", 
-                         "growth", "sales", "careers", "jobs", "y combinator"],
-            "Finance": ["financial", "trading", "crypto", "web3"],
-            "Politics": ["political", "government", "regulation", "regulatory", "conflict", 
-                         "ukraine", "russia", "israel", "palestine"],
-            "Science": ["research", "academic", "neuroscience", "bci", "science", "stem", 
-                       "space", "exploration", "health", "longevity", "theoretical"],
-            "Creative": ["artist", "designer", "music", "arts", "food"],
-            "Social": ["community", "support", "personal", "sports", "culture", "family", 
-                       "e/acc", "reflection"],
-            "Media": ["news", "journalism", "publisher", "book"],
-            "Geographic": ["indian", "chinese", "irish"],
-            "Other": ["other", "random"]
-        }
-        
-        # Create mapping from community ID to category
-        community_categories = {}
-        
-        for comm_id, label in self.community_labels.items():
-            assigned = False
-            label_lower = label.lower()
-            
-            # Try to find matching category
-            for category, keywords in categories.items():
-                if any(keyword in label_lower for keyword in keywords):
-                    community_categories[comm_id] = category
-                    assigned = True
-                    break
-            
-            # If no category matches, use "Other"
-            if not assigned:
-                community_categories[comm_id] = "Other"
-        
-        return community_categories
-    
-    def chunk_accounts_for_processing(self, accounts: List[Dict], 
-                                     max_chunk_size: int = DEFAULT_BATCH_SIZE) -> List[List[Dict]]:
-        """
-        Split accounts into manageable chunks for API processing.
-        
-        Args:
-            accounts: List of account dictionaries
-            max_chunk_size: Maximum chunk size
-            
-        Returns:
-            List of account chunks
-        """
-        chunks = []
-        current_chunk = []
-        
-        for account in accounts:
-            current_chunk.append(account)
-            if len(current_chunk) >= max_chunk_size:
-                chunks.append(current_chunk)
-                current_chunk = []
-        
-        # Add any remaining accounts
-        if current_chunk:
-            chunks.append(current_chunk)
-        
-        return chunks
-    
-    def merge_community_labels(self, label_groups: List[Dict[str, str]]) -> Dict[str, str]:
-        """
-        Merge multiple sets of community labels, resolving duplicates.
-        
-        Args:
-            label_groups: List of community label dictionaries
-            
-        Returns:
-            Merged community labels
-        """
-        if not label_groups:
-            return {}
-        
-        # If only one group, just return it
-        if len(label_groups) == 1:
-            return label_groups[0]
-        
-        # Start with the first group
-        merged_labels = label_groups[0].copy()
-        
-        # Track label frequencies to identify the most common themes
-        label_counts = {}
-        for labels in label_groups:
-            for community, label in labels.items():
-                if label not in label_counts:
-                    label_counts[label] = 0
-                label_counts[label] += 1
-        
-        # Sort labels by frequency (most common first)
-        sorted_labels = sorted(label_counts.items(), key=lambda x: x[1], reverse=True)
-        
-        # Create a comprehensive set of labels that covers all communities
-        next_community_id = max([int(c) for c in merged_labels.keys()]) + 1 if merged_labels else 0
-        
-        # Add all labels from subsequent groups
-        for group_idx, labels in enumerate(label_groups[1:], 1):
-            for community, label in labels.items():
-                # If this exact label is already in merged_labels, skip
-                if label in merged_labels.values():
-                    continue
-                    
-                # Otherwise add as a new community
-                merged_labels[str(next_community_id)] = label
-                next_community_id += 1
-        
-        return merged_labels
-    
-    async def generate_community_labels(self, accounts: List[Dict], 
-                                     num_communities: int = DEFAULT_NUM_COMMUNITIES) -> Dict[str, str]:
-        """
-        Generate community labels using both account descriptions and tweet summaries with parallel processing.
-        
-        Args:
-            accounts: List of account dictionaries
-            num_communities: Number of communities to generate
-            
-        Returns:
-            Dictionary mapping community IDs to labels
-        """
-        # Validate inputs
-        if len(accounts) < MIN_ACCOUNTS_FOR_COMMUNITIES:
-            logger.warning(f"Not enough accounts ({len(accounts)}) to form communities")
-            return {}
-        
-        # Prepare accounts with tweets
-        accounts_with_info = []
-        for account in accounts:
-            tweet_summary = account.get("tweet_summary", "")
-            # Only include accounts that have either a description or tweet summary
-            if account.get("description") or tweet_summary:
-                account_info = {
-                    "screen_name": account.get("screen_name", ""),
-                    "description": account.get("description", ""),
-                    "tweet_summary": tweet_summary
-                }
-                accounts_with_info.append(account_info)
-        
-        if not accounts_with_info:
-            logger.warning("No account information available for community label generation")
-            return {}
-        
-        # Use progress indicators
-        progress = st.progress(0)
-        status_text = st.empty()
-        status_text.text("Generating community labels...")
-        
-        # Check if we need to chunk (roughly estimate token count)
-        estimated_tokens = sum(len(a["description"].split()) + len(a.get("tweet_summary", "").split()) 
-                                for a in accounts_with_info)
-        need_chunking = estimated_tokens > 20000
-        
-        if need_chunking:
-            # Chunk accounts
-            chunks = self.chunk_accounts_for_processing(accounts_with_info)
-            
-            # Process chunks in parallel
-            async def process_chunk(chunk_idx, chunk):
-                chunk_labels = await self.ai_client.generate_community_labels(chunk, num_communities)
-                return chunk_idx, chunk_labels
-            
-            # Create tasks for all chunks
-            chunk_tasks = [
-                process_chunk(i, chunk) for i, chunk in enumerate(chunks)
-            ]
-            
-            # Process chunks with semaphore to limit concurrency
-            semaphore = asyncio.Semaphore(3)  # Limit to 3 concurrent AI requests
-            
-            async def process_chunk_with_semaphore(chunk_idx, chunk):
-                async with semaphore:
-                    return await process_chunk(chunk_idx, chunk)
-                
-            # Create tasks with semaphore
-            chunk_tasks = [
-                process_chunk_with_semaphore(i, chunk) for i, chunk in enumerate(chunks)
-            ]
-            
-            # Wait for all tasks to complete
-            label_groups = []
-            completed = 0
-            
-            for completed_task in asyncio.as_completed(chunk_tasks):
-                chunk_idx, chunk_labels = await completed_task
-                if chunk_labels:
-                    label_groups.append(chunk_labels)
-                
-                completed += 1
-                progress.progress(completed / len(chunks))
-                status_text.text(f"Processed chunk {completed}/{len(chunks)}")
-            
-            # Merge results
-            self.community_labels = self.merge_community_labels(label_groups)
-        else:
-            # Process all accounts at once
-            self.community_labels = await self.ai_client.generate_community_labels(
-                accounts_with_info, 
-                num_communities
-            )
-        
-        # Generate colors for communities
-        if self.community_labels:
-            color_list = self.generate_n_colors(len(self.community_labels))
-            self.community_colors = {
-                community_id: self.make_color_more_distinct(color) 
-                for community_id, color in zip(self.community_labels.keys(), color_list)
-            }
-            
-        status_text.text("Community label generation complete!")
-        progress.progress(1.0)
-        
-        return self.community_labels
-    
-    async def classify_accounts(self, accounts: List[Dict]) -> Dict[str, str]:
-        """
-        Classify accounts into communities with parallel processing.
-        
-        Args:
-            accounts: List of account dictionaries
-            
-        Returns:
-            Dictionary mapping usernames to community IDs
-        """
-        # Skip if no communities
-        if not self.community_labels:
-            logger.warning("No community labels available for classification")
-            return {}
-        
-        # Show progress indicator
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        status_text.text("Classifying accounts into communities...")
-        
-        # Filter accounts that need classification
-        accounts_to_classify = [
-            acc for acc in accounts
-            if acc.get("screen_name") and (acc.get("description") or acc.get("tweet_summary", ""))
-        ]
-        
-        if not accounts_to_classify:
-            logger.warning("No accounts with content found for classification")
-            return {}
-        
-        # Divide into chunks for batch processing
-        chunks = self.chunk_accounts_for_processing(accounts_to_classify)
-        
-        # Process chunks in parallel
-        results = {}
-        
-        # Define function to process a chunk
-        async def process_chunk(chunk_idx, chunk):
-            chunk_results = await self.ai_client.classify_accounts(chunk, self.community_labels)
-            return chunk_idx, chunk_results
-        
-        # Create semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(3)  # Limit to 3 concurrent AI requests
-        
-        async def process_chunk_with_semaphore(chunk_idx, chunk):
-            async with semaphore:
-                return await process_chunk(chunk_idx, chunk)
-        
-        # Create tasks for all chunks
-        chunk_tasks = [
-            process_chunk_with_semaphore(i, chunk) for i, chunk in enumerate(chunks)
-        ]
-        
-        # Process all chunks with progress tracking
-        completed = 0
-        
-        for completed_task in asyncio.as_completed(chunk_tasks):
-            chunk_idx, chunk_results = await completed_task
-            
-            # Merge results
-            results.update(chunk_results)
-            
-            # Update progress
-            completed += 1
-            progress_bar.progress(completed / len(chunks))
-            status_text.text(f"Classified {len(results)}/{len(accounts_to_classify)} accounts")
-        
-        # Store results
-        self.node_communities = results
-        
-        # Complete progress
-        progress_bar.progress(1.0)
-        status_text.text(f"Classification complete! Assigned {len(results)} accounts to communities")
-        
-        return results
-    
-    def get_top_accounts_by_community(self, nodes: Dict[str, Dict], 
+    def get_top_accounts_by_community(self, 
+                                     nodes: Dict[str, Dict], 
                                      importance_scores: Dict[str, float], 
-                                     top_n: int = 20) -> Dict[str, List]:
-        """
-        Get top accounts for each community based on importance scores.
-        
-        Args:
-            nodes: Dictionary of node data
-            importance_scores: Dictionary mapping node IDs to importance scores
-            top_n: Number of top accounts to include per community
-            
-        Returns:
-            Dictionary mapping community IDs to lists of (node_id, node_data, score) tuples
-        """
-        logger.info(f"Getting top accounts by community. Node communities: {len(self.node_communities)}")
-        
+                                     top_n: int = 15) -> Dict[str, List]:
+        """Get top accounts for each community that actually has members."""
         if not self.node_communities:
-            logger.warning("No node communities found")
             return {}
             
-        # Group accounts by community
         community_accounts = {}
-        node_count = 0
         
         for node_id, node in nodes.items():
             if node_id.startswith("orig_"):
                 continue
                 
-            username = node["screen_name"]
-            node_count += 1
-            
+            username = node.get("screen_name", "")
+            if not username:
+                continue
+                
+            # Only process if this username is in our filtered communities
             if username in self.node_communities:
                 community = self.node_communities[username]
-                if community not in community_accounts:
-                    community_accounts[community] = []
-                community_accounts[community].append((node_id, node, importance_scores.get(node_id, 0)))
-        
-        logger.info(f"Processed {node_count} nodes, found {len(community_accounts)} communities")
+                
+                # Double-check the community still exists in our labels
+                if community in self.community_labels:
+                    if community not in community_accounts:
+                        community_accounts[community] = []
+                    
+                    account_data = {
+                        'username': node_id,
+                        'screen_name': username,
+                        'importance_score': importance_scores.get(node_id, 0),
+                        'tweet_summary': node.get('tweet_summary', ''),
+                        'description': node.get('description', ''),
+                        'followers_count': node.get('followers_count', 0),
+                        'friends_count': node.get('friends_count', 0)
+                    }
+                    
+                    community_accounts[community].append(account_data)
         
         # Sort accounts within each community by importance
         top_accounts = {}
         for community, accounts in community_accounts.items():
-            sorted_accounts = sorted(accounts, key=lambda x: x[2], reverse=True)[:top_n]
+            sorted_accounts = sorted(accounts, key=lambda x: x['importance_score'], reverse=True)[:top_n]
             top_accounts[community] = sorted_accounts
-            logger.info(f"Community {community}: {len(sorted_accounts)} accounts after sorting")
         
         return top_accounts
+
+class FixedCommunityUI:
+    """
+    FIXED community filtering interface that only shows communities with members.
+    """
+    
+    @staticmethod
+    def display_fixed_community_filters(community_labels: Dict[str, str], 
+                                       node_communities: Dict[str, str],
+                                       key_prefix: str = "community") -> Dict[str, bool]:
+        """
+        Display FIXED community filters - only shows communities with actual members.
+        """
+        if not community_labels:
+            st.info("No communities available. Run community detection first.")
+            return {}
+        
+        # Count ACTUAL members per community
+        community_counts = {}
+        for username, comm_id in node_communities.items():
+            if comm_id in community_labels:  # Only count if community label exists
+                community_counts[comm_id] = community_counts.get(comm_id, 0) + 1
+        
+        # ONLY show communities that have members
+        communities_with_members = [
+            (comm_id, label, community_counts.get(comm_id, 0)) 
+            for comm_id, label in community_labels.items()
+            if community_counts.get(comm_id, 0) > 0  # CRITICAL FIX
+        ]
+        
+        if not communities_with_members:
+            st.warning("No communities have members assigned. Try re-running community detection.")
+            return {}
+        
+        # Sort by member count (largest first)
+        communities_with_members.sort(key=lambda x: x[2], reverse=True)
+        
+        st.subheader(f"Community Filters ({len(communities_with_members)} communities)")
+        
+        # Quick selection buttons
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("Select All", key=f"{key_prefix}_select_all"):
+                for comm_id, _, _ in communities_with_members:
+                    st.session_state[f"{key_prefix}_filter_{comm_id}"] = True
+                st.rerun()
+        
+        with col2:
+            if st.button("Select None", key=f"{key_prefix}_select_none"):
+                for comm_id, _, _ in communities_with_members:
+                    st.session_state[f"{key_prefix}_filter_{comm_id}"] = False
+                st.rerun()
+        
+        with col3:
+            if st.button("Top 5 Only", key=f"{key_prefix}_top_5"):
+                top_5_ids = [comm_id for comm_id, _, _ in communities_with_members[:5]]
+                for comm_id, _, _ in communities_with_members:
+                    st.session_state[f"{key_prefix}_filter_{comm_id}"] = comm_id in top_5_ids
+                st.rerun()
+        
+        # Display communities in a compact way
+        selected_communities = {}
+        
+        if len(communities_with_members) <= 12:
+            # Show all communities if reasonable number
+            n_cols = 2 if len(communities_with_members) > 6 else 1
+            cols = st.columns(n_cols)
+            
+            for i, (comm_id, label, count) in enumerate(communities_with_members):
+                col_idx = i % n_cols
+                with cols[col_idx]:
+                    default_value = count >= 10  # Auto-select larger communities
+                    
+                    selected = st.checkbox(
+                        f"{label} ({count})",
+                        value=st.session_state.get(f"{key_prefix}_filter_{comm_id}", default_value),
+                        key=f"{key_prefix}_filter_{comm_id}",
+                        help=f"Community with {count} members"
+                    )
+                    selected_communities[comm_id] = selected
+        else:
+            # Use selectbox for many communities
+            st.warning(f"Too many communities ({len(communities_with_members)}). Showing top 12.")
+            communities_with_members = communities_with_members[:12]
+            
+            for comm_id, label, count in communities_with_members:
+                default_value = count >= 10
+                selected = st.checkbox(
+                    f"{label} ({count})",
+                    value=st.session_state.get(f"{key_prefix}_filter_{comm_id}", default_value),
+                    key=f"{key_prefix}_filter_{comm_id}"
+                )
+                selected_communities[comm_id] = selected
+        
+        # Show summary
+        selected_count = sum(1 for selected in selected_communities.values() if selected)
+        total_members = sum(
+            community_counts.get(comm_id, 0) 
+            for comm_id, selected in selected_communities.items() 
+            if selected
+        )
+        
+        if selected_count > 0:
+            st.success(f"Selected {selected_count} communities with {total_members} total members")
+        else:
+            st.warning("No communities selected!")
+        
+        return selected_communities
+
+def get_optimized_community_settings():
+    """Provide optimized community detection settings."""
+    
+    st.sidebar.subheader("Community Detection Settings")
+    
+    # Smart defaults
+    if 'network_data' in st.session_state and st.session_state.network_data:
+        network_size = len(st.session_state.network_data.nodes)
+        
+        if network_size < 100:
+            default_communities = 4
+            st.sidebar.info("Small network: 4 communities recommended")
+        elif network_size < 500:
+            default_communities = 6
+            st.sidebar.info("Medium network: 6 communities recommended")
+        else:
+            default_communities = 8
+            st.sidebar.info("Large network: 8 communities recommended")
+    else:
+        default_communities = 6
+    
+    num_communities = st.sidebar.slider(
+        "Target communities",
+        min_value=3,
+        max_value=12,
+        value=default_communities,
+        help="More = specific groups, fewer = broader categories"
+    )
+    
+    min_community_size = st.sidebar.slider(
+        "Minimum community size",
+        min_value=3,
+        max_value=25,
+        value=8,
+        help="Communities smaller than this will be filtered out"
+    )
+    
+    return num_communities, min_community_size
