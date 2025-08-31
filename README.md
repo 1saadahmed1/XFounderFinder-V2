@@ -1,115 +1,121 @@
-# X Network Visualization
+# XFounderFinder V2
 
-An interactive Founder finding tool for exploring X (formerly Twitter) following networks. This application allows users to analyze the network structure, identify influential accounts, detect communities, and generate summaries of tweet content.
+AI-powered X/Twitter network analysis tool for systematic founder and candidate identification.
+
+## Overview
+
+XFounderFinder V2 analyzes Twitter networks to identify and rank potential founders, candidates, or collaborators based on your specific requirements. It combines social network analysis with AI to provide systematic candidate evaluation with detailed evidence and scoring.
 
 ## Features
 
-- **Topic Nodes** that connect to accounts discussing similar topics
-- **Network Analysis** using CloutRank (PageRank) or In-Degree metrics
-- **Community Detection** powered by AI to group accounts by similar topics and interests
-- **Tweet Summarization** to understand account content without manual browsing
-- **Comprehensive Filtering** by followers, following, tweet count, and community
-- **Data Export** for further analysis in other tools
-- **High Performance** with parallel processing for API requests and data processing
+- **Network Collection**: Fetches 1st and 2nd degree Twitter connections
+- **AI Candidate Analysis**: Uses Google Gemini to analyze profiles against your criteria
+- **Systematic Scoring**: 4-category scoring system with detailed evidence
+- **Community Detection**: Auto-groups accounts into professional communities
+- **Tweet Analysis**: Processes recent tweets for professional insights
+- **Influence Measurement**: CloutRank algorithm for network influence scoring
 
-## Setup
+## How It Works
 
-### Prerequisites
+1. **Data Collection**: Enter target username, app fetches their network connections
+2. **Community Detection**: AI groups accounts into professional categories
+3. **AI Analysis**: You provide search criteria, AI scores each person on relevance
+4. **Ranking**: Systematic ranking with evidence and outreach recommendations
 
-- Python 3.8 or higher
-- RapidAPI key for Twitter API access
-- Google Gemini API key for AI features
+## Scoring System
 
-### Installation
+- **Role Fit (40 points)**: Match between bio/experience and your requirements
+- **Influence Network (25 points)**: CloutRank influence within this specific network
+- **Technical Evidence (25 points)**: Skills demonstrated in recent tweets
+- **Accessibility (10 points)**: Likelihood of responding to outreach
 
-1. Clone this repository:
-   ```
-   git clone https://github.com/1saadahmed1/XFounderFinder
-   cd x-network-viz
-   ```
+Results are ranked A-D tiers with specific evidence for each recommendation.
+
+## Prerequisites
+
+- Python 3.8+
+- RapidAPI account (for Twitter data)
+- Google Gemini API key
+
+## Installation
+
+1. Clone repository:
+```bash
+git clone https://github.com/1saadahmed1/XFounderFinder-V2.git
+cd XFounderFinder-V2
+```
 
 2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-3. Create a `.streamlit/secrets.toml` file with your API keys:
-   ```toml
-   RAPIDAPI_KEY = "your_rapidapi_key_here"
-   GEMINI_API_KEY = "your_gemini_api_key_here"
-   ```
-
-### Running the Application
-
-Start the Streamlit app:
+```bash
+pip install -r requirements.txt
 ```
+
+3. Configure API keys:
+Create `config.py`:
+```python
+RAPIDAPI_KEY = "your_rapidapi_key"
+GEMINI_API_KEY = "your_gemini_key"
+RAPIDAPI_HOST = "twitter-api45.p.rapidapi.com"
+```
+
+4. Run application:
+```bash
 streamlit run app.py
 ```
 
-## Usage Guide
+## Usage
 
-1. **Enter an X username** (without the @ symbol) in the text input field
-2. Adjust **Data Fetch Options** in the sidebar:
-   - Pages of Following for Original Account (each page = 20 accounts)
-   - Pages of Following for Second Degree (connections of connections)
-3. Click **Generate Network** to retrieve and analyze the network data
-4. Use the **Display Options** to configure visualization:
-   - Importance Metric: Choose between In-Degree and CloutRank
-   - Account/Label Size: Adjust visual appearance
-   - Max Accounts: Control how many nodes are displayed
-   - Node Spacing: Control the distance between nodes
-5. Apply **Filters** in the sidebar to focus on accounts of interest:
-   - Numeric ranges for tweets, followers, following
-   - Degree filtering (show/hide original, first-degree, second-degree)
-   - Community filtering (when communities are generated)
-6. Click **Summarize Tweets & Generate Communities** to:
-   - Fetch and analyze tweets from top accounts
-   - Generate AI-powered community classifications
-   - Extract and visualize common topics
-7. Explore the **Network Analysis** tables showing:
-   - Top accounts by importance
-   - Top accounts within each community
-   - Topics discussed across accounts
-8. **Export Data** using the download button in the sidebar
+1. **Network Collection**: Enter Twitter username and set collection limits
+2. **Community Detection**: Run AI community detection to group accounts
+3. **Candidate Search**: Enter search criteria (e.g., "AI startup founders with ML background")
+4. **Review Results**: Get ranked candidates with detailed analysis and evidence
+5. **Export**: Download CSV with complete analysis and outreach suggestions
+
+## Configuration
+
+Key settings in `config.py`:
+
+- `MAX_CONCURRENT_REQUESTS`: API request concurrency (default: 10)
+- Collection limits: Pages to fetch for 1st/2nd degree connections
+- Community detection: Target communities and minimum sizes
+- CloutRank parameters: Damping factor and convergence settings
 
 ## Project Structure
 
 ```
-network_viz_app/
-├── app.py                  # Main Streamlit application
-├── config.py               # Configuration and constants
-├── api/                    # API client modules
-│   ├── twitter_client.py   # X/Twitter API client
-│   └── ai_client.py        # Google Gemini API client
-├── data/                   # Data handling modules
-│   ├── network.py          # Network data structures
-│   ├── analysis.py         # Network analysis algorithms
-│   ├── processing.py       # Data processing utilities
-│   └── communities.py      # Community detection
-├── visualization/          # Visualization components
-│   └── tables.py           # Table generation
-└── utils/                  # Utility functions
-    ├── helpers.py          # State management & helpers
-    └── logging_config.py   # Logging configuration
+XFounderFinder-V2/
+├── api/                 # API clients (Twitter, Gemini)
+├── data/               # Network data structures and analysis
+├── utils/              # Helper functions and state management
+├── visualization/      # Table displays and UI components
+├── app.py             # Main Streamlit application
+├── config.py          # API keys and settings
+└── requirements.txt   # Dependencies
 ```
 
-## Performance Optimizations
+## API Keys Setup
 
-The application includes several performance enhancements:
-- Parallel fetching of X/Twitter API data
-- Concurrent processing of tweets and community detection
-- Optimized TCP connection handling
-- Automatic retry mechanisms for API failures
+**RapidAPI (Twitter Data)**:
+1. Sign up at rapidapi.com
+2. Subscribe to Twitter API service
+3. Copy your API key
+
+**Google Gemini**:
+1. Visit Google AI Studio
+2. Generate API key
+3. Enable Gemini API access
+
+## Performance Notes
+
+- Network collection limited to prevent memory issues
+- Tweet processing prioritizes most influential accounts
+- AI analysis uses batch processing for efficiency
+- Concurrent requests managed to respect rate limits
 
 ## License
 
-This project is available under a dual license:
-- **Non-Commercial Use**: Free to use, modify, and distribute for non-commercial purposes
-- **Commercial Use**: Requires a license agreement with revenue sharing (8% of gross revenue)
+See LICENSE file for details.
 
-See the [LICENSE.md](LICENSE.md) file for full details.
+## Support
 
-## Acknowledgements
-- Streamlit for the web application framework
-- NetworkX for graph algorithms
-- Google Gemini API for AI-powered analysis
+For issues or questions, please use GitHub Issues.
